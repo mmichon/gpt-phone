@@ -1,0 +1,13 @@
+/*************  ✨ Codeium Command 🌟  *************/
+# requirements.txt
+colorlog
+dotenv
+elevenlabs
+google-cloud-speech
+gpiozero
+mpv
+openai
+pyaudio
+pydub
+rpi-lgpio
+SpeechRecognition

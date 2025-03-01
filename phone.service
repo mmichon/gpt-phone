@@ -1,0 +1,14 @@
+# https://github.com/torfsen/python-systemd-tutorial
+[Unit]
+Description=phone service
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=sh -c "/home/pi/start-phone.sh"
+Restart=on-failure
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
