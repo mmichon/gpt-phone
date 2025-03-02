@@ -21,24 +21,33 @@ GPT Phone is a Python-based project that simulates a phone call with various cha
     pip3 install --upgrade SpeechRecognition openai mpv google-cloud-speech elevenlabs pydub libpulse-dev pulseaudio apulse pyaudio build-essential libssl-dev libasound2 wget flac gst-1.0 mpg123 gpiozero dotenv mpv ffmpeg
     ```
 
+## Hardware
+
+1. Connect the hook switch to GPIO14 (or change the pin definition in `gpt-phone.py`) and ground
+2. Connect the rotary dial switch to GPIO15 (or change the pin definition in `gpt-phone.py`) and ground
+3. Connect your audio device's microphone to the phone's microphone circuit
+4. Connect your audio device's speaker to the phone's speaker circuit
+
+## Configuration
+
+- **Personality**: Personalize the system roles, greetings, etc in [roles.py](http://_vscodecontentref_/0) file.
+- **Voices**: Set the voice IDs for ElevenLabs in [roles.py](http://_vscodecontentref_/1) array.
+- **Dialtone Files**: Optionally, change the dialtone files in [roles.py](http://_vscodecontentref_/2) array.
+- **
+
 ## Usage
 
 1. Set the environment variables `OPENAI_API_KEY` and `ELEVENLABS_KEY`:
     ```sh
     export OPENAI_API_KEY="your_openai_api_key"
     export ELEVENLABS_KEY="your_elevenlabs_api_key"
+    export TEST_DIGIT=1 # Optional. Forces a particular role to answer the phone, for testing purposes.
     ```
 
 2. Run the script:
     ```sh
     python3 gpt-phone.py
     ```
-
-## Configuration
-
-- **ChatGPT Parameters**: Customize the system roles and greetings in the [gpt-phone.py](http://_vscodecontentref_/0) file.
-- **Voice IDs**: Set the voice IDs for ElevenLabs in the [ELEVENLABS_VOICE_ID](http://_vscodecontentref_/1) array.
-- **Dialtone Files**: Set the dialtone files in the [DIALTONE_FILE](http://_vscodecontentref_/2) array.
 
 ## Systemd Service
 

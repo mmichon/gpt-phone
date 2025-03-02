@@ -16,6 +16,7 @@ import speech_recognition as sr
 from elevenlabs.client import ElevenLabs
 from elevenlabs import stream
 from pydub import AudioSegment
+import json
 import pydub.playback
 import os, sys, contextlib # for ALSA lib errors -- https://stackoverflow.com/questions/7088672/pyaudio-working-but-spits-out-error-messages-each-time
 
@@ -26,16 +27,19 @@ SPEAK = True
 # Flag to skip the dialing process for testing purposes
 SKIP_DIALING = False
 
+# Digit to force for testing
+TEST_DIGIT = None or os.environ.get("TEST_DIGIT")
+
 # Voice ID for the operator
 OPERATOR_VOICE_ID = "qHR09fcvu6SoDtFzqFvm" # Ryan (articulate, friendly, conversational)
 # Greeting message from the operator
-OPERATOR_GREETING = "Please dial a single digit to proceed. For a directory, please dial 0."
+OPERATOR_GREETING = "Please dial a single digit to proceed. For a directory, please dial zero."
 # Message for wrong number
 WRONG_NUMBER = "That number is disconnected. Please hang up and try again."
 
 # Speech recognition configuration
-LISTEN_TIMEOUT = 5     # Time to wait for speech before giving up
-PHRASE_TIMEOUT = 2    # Space between recordings for sepating phrases
+LISTEN_TIMEOUT = 10     # Time to wait for speech before giving up
+PHRASE_TIMEOUT = 5    # Space between recordings for sepating phrases
 # SPEECH_SPEED = 2#.5
 
 # API clients
@@ -46,7 +50,8 @@ CHATGPT_MODEL = "gpt-3.5-turbo"
 
 # Hardware configuration
 # DEVICE_ID = None # speaker device
-DYNAMIC_ENERGY_THRESHOLD = True
+DYNAMIC_ENERGY_THRESHOLD = False
+ENERGY_THRESHOLD = 40
 HOOK_GPIO = 14
 DIAL_GPIO = 15
 
@@ -96,25 +101,24 @@ def ignoreStderr(): # quiets pyaudio/jackd errors on Linux
         os.dup2(old_stderr, 2)
         os.close(old_stderr)
 
-def sendchat(prompt, system_role):
+def sendchat(transcript):
     """
-    Sends a chat prompt to the OpenAI API and returns the response.
+    Sends a chat transcript to the OpenAI API and returns the response.
 
     Args:
-        prompt (str): The prompt to send to the API.
-        system_role (str): The system role to send to the API.
+        transcript (list): The list of messages to send to the API.
 
     Returns:
         str: The response from the API.
     """
+
+    logger.debug("Sending transcript: \n%s", json.dumps(transcript, indent=2))
     completion = openai_client.chat.completions.create(
-        model=CHATGPT_MODEL,
-        messages=[
-            {"role": "system", "content": system_role},
-            {"role": "user", "content": prompt},
-        ],
+        model = CHATGPT_MODEL,
+        messages = transcript,
     )
 
+    logger.debug("Completion: %s", completion)
     response = completion.choices[0].message.content.strip()
 
     return response
@@ -140,8 +144,9 @@ class Phone:
             voice (str): The voice ID to use for the speech.
         """
         logger.info("Speaking '%s'", text)
-        speech_start = time.time()
         if SPEAK:
+            speech_start = time.time()
+
             try:
                 logger.info("Generating audio from text")
                 audio_stream = self.client.text_to_speech.convert_as_stream(
@@ -149,12 +154,14 @@ class Phone:
                     voice_id=voice,
                     model_id=ELEVENLABS_MODEL_ID,
                 )
+
+                logger.debug("T2S took %s seconds", str(time.time() - speech_start))
+                stream(audio_stream)
             except Exception as e:
+                # This is where Elevenlabs quota errors can be caught if you want
                 logger.error("An error occurred in speech generation: %s", e)
                 return None
 
-            logger.debug("T2S took %s seconds", str(time.time() - speech_start))
-            stream(audio_stream)
 
     def speak_directory(self, roles):
         """
@@ -202,11 +209,14 @@ class Phone:
         logger.info("Determining ambient noise level")
         with ignoreStderr(): # kills stderr
             with sr.Microphone() as source:
-                r.dynamic_energy_threshold = DYNAMIC_ENERGY_THRESHOLD
-                r.adjust_for_ambient_noise(source, 2)  # listen for a few seconds to calibrate the energy threshold for ambient noise levels
+                if DYNAMIC_ENERGY_THRESHOLD:
+                    r.dynamic_energy_threshold = DYNAMIC_ENERGY_THRESHOLD
+                    r.adjust_for_ambient_noise(source, 2)  # listen for a few seconds to calibrate the energy threshold for ambient noise levels
+                else:
+                    r.energy_threshold = ENERGY_THRESHOLD
         logger.debug("Energy threshold: %s"  % r.energy_threshold)
 
-        transcription = []  # reset memory at each call
+        transcript = [{"role": "developer", "content": role.system_role}]  # Reset memory at beginning of each call
 
         self.speak(role.voice_id, role.greeting)
 
@@ -230,17 +240,14 @@ class Phone:
                         gpt_start = time.time()
                         logger.info("Sending speech to ChatGPT")
 
-                        transcription.append({"role": "user", "content": text})
-
-                        prompt = "\n".join([message["content"] for message in transcription])
-                        # logger.info("About to send prompt:\n%s", prompt)
-                        chat_response = sendchat(prompt, role.system_role)
-
+                        transcript.append({"role": "user", "content": text})
+                        # prompt = "\n".join([message["content"] for message in transcript])
+                        chat_response = sendchat(transcript)
                         logger.debug("GPT took %s seconds", str(time.time() - gpt_start))
 
-                        transcription.append({"role": "assistant", "content": chat_response})
-
                         self.speak(role.voice_id, chat_response)
+
+                        transcript.append({"role": "assistant", "content": chat_response})
                     else:
                         logger.warning("Couldn't transcribe audio")
                         self.speak(role.voice_id, "What was that?")
@@ -274,15 +281,30 @@ def main():
     """
     logger.info("Starting up. OS is %s.", OS)
 
-    roles = [None, role_elf, None, role_fred, None, None, role_devil, role_god, role_mike, None]
+    # Starts with 0, ends with 9
+    roles = [None,                  # 0: Reserved for operator
+             role_elf,              # 1
+             role_prostitute,       # 2
+             role_old_prospector,   # 3
+             role_psychic,          # 4
+             role_mike,             # 5
+             role_devil,            # 6
+             role_god,              # 7
+             role_laura,            # 8
+             role_fred              # 9
+             ]
 
     phone = Phone()
     logger.info("Initialized phone")
 
     while True:
-        if SKIP_DIALING or OS != "Linux":
-            phone.answer_phone(role_mike) # Answer by default as Mike
-            break
+        if OS == "Darwin": # If testing on Mac, skip dialog and dialing and force a digit
+            phone.answer_phone(roles[int(TEST_DIGIT)])
+            continue
+
+        if SKIP_DIALING: # If on Linux but skipping dialing, force a voice
+            phone.answer_phone(role_elf) # Answer by default as Mike
+            continue
 
         logger.info("Waiting for hook event...")
         if hook.value == 0:
@@ -290,7 +312,7 @@ def main():
 
         logger.info("Someone picked up the phone")
 
-        time.sleep(2) # Delay to make sure the operator is heard in time
+        # time.sleep(2) # Delay to make sure the operator is heard in time
         phone.speak(OPERATOR_VOICE_ID, OPERATOR_GREETING)
 
         dial.wait_for_press(timeout=10)
@@ -308,8 +330,9 @@ def main():
                 time.sleep(1)
 
                 if SKIP_DIALING == False and SPEAK == True:
-                    dialtone_sound = AudioSegment.from_mp3(role.dialtone_file)
-                    pydub.playback.play(dialtone_sound)
+                    with ignoreStderr(): # kills stderr
+                        dialtone_sound = AudioSegment.from_mp3(role.dialtone_file)
+                        pydub.playback.play(dialtone_sound)
 
                 phone.answer_phone(role)
             else:
