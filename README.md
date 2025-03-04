@@ -50,32 +50,12 @@ GPT Phone is a Python-based project that simulates a phone call with various cha
 
 ## Systemd Service
 
-To run the GPT Phone as a systemd service, create a service file:
+To run the GPT Phone as a systemd service, create a service file and enable it:
 
-1. Create [phone.service](http://_vscodecontentref_/3):
+1. Enable and start the service:
     ```sh
-    sudo nano /etc/systemd/system/phone.service
-    ```
-
-2. Add the following content:
-    ```ini
-    [Unit]
-    Description=phone service
-    After=network-online.target
-
-    [Service]
-    Type=simple
-    User=root
-    ExecStart=sh -c "/home/pi/start-phone.sh"
-    Restart=on-failure
-    Environment=PYTHONUNBUFFERED=1
-
-    [Install]
-    WantedBy=multi-user.target
-    ```
-
-3. Enable and start the service:
-    ```sh
+    sudo cp phone.service /etc/systemd/systemd
+    sudo systemctl --reload-daemon
     sudo systemctl enable phone.service
     sudo systemctl start phone.service
     ```
