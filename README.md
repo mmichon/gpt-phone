@@ -1,6 +1,6 @@
 # GPT Phone
 
-GPT Phone is a Python-based project that simulates a phone call with various characters using OpenAI's GPT-3.5 and ElevenLabs for text-to-speech. The project is designed to run on a Raspberry Pi with a physical phone interface.
+GPT Phone is a Python-based project that simulates a phone call with various characters using OpenAI's GPT-3.5 and ElevenLabs for text-to-speech. The project is designed to run on a Raspberry Pi with a physical phone interface. It also interfaces via GPIO pins to a Bell 304 series telephone's hardware including the rotary dial switch, hook switch, handset speaker, and handset microphone.
 
 ## Installation
 
@@ -18,7 +18,6 @@ GPT Phone is a Python-based project that simulates a phone call with various cha
 3. Install Python dependencies:
     ```sh
     pip3 install -r requirements.txt
-    pip3 install --upgrade SpeechRecognition openai mpv google-cloud-speech elevenlabs pydub libpulse-dev pulseaudio apulse pyaudio build-essential libssl-dev libasound2 wget flac gst-1.0 mpg123 gpiozero dotenv mpv ffmpeg
     ```
 
 ## Hardware
