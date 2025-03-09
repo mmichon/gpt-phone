@@ -58,6 +58,7 @@ To run the GPT Phone as a systemd service, create a service file and enable it:
     sudo systemctl --reload-daemon
     sudo systemctl enable phone.service
     sudo systemctl start phone.service
+    loginctl enable-linger # this allows pulseaudio/pipewire to load upon boot
     ```
 
 ## License
