@@ -128,7 +128,7 @@ class Phone:
         """
         Initializes the Phone object and loads the ElevenLabs client.
         """
-        logger.info("Initializing phone object and speech API")
+        logger.debugh("Initializing phone object and speech API")
         load_dotenv()
 
         self.client = ElevenLabs(
@@ -148,7 +148,7 @@ class Phone:
             speech_start = time.time()
 
             try:
-                logger.info("Generating audio from text")
+                logger.debugh("Generating audio from text")
                 audio_stream = self.client.text_to_speech.convert_as_stream(
                     text=text,
                     voice_id=voice,
@@ -206,7 +206,7 @@ class Phone:
         Args:
             role (PhoneRole): The role that was dialed.
         """
-        logger.info("Determining ambient noise level")
+        logger.debugh("Determining ambient noise level")
         with ignoreStderr(): # kills stderr
             with sr.Microphone() as source:
                 if DYNAMIC_ENERGY_THRESHOLD:
@@ -222,12 +222,12 @@ class Phone:
 
         while OS != "Linux" or hook.value == 1:  # if on Mac or back on hook, return
             try:
-                logger.info("Listening...")
+                logger.debugh("Listening...")
                 with ignoreStderr(): # kills stderr
                     with sr.Microphone() as source:
                         audio = r.listen(source, timeout=LISTEN_TIMEOUT, phrase_time_limit=PHRASE_TIMEOUT)
 
-                logger.info("Analyzing heard audio")
+                logger.debugh("Analyzing heard audio")
                 audio_start = time.time()
 
                 try:
@@ -238,7 +238,7 @@ class Phone:
 
                     if text:
                         gpt_start = time.time()
-                        logger.info("Sending speech to ChatGPT")
+                        logger.debugh("Sending speech to ChatGPT")
 
                         transcript.append({"role": "user", "content": text})
                         # prompt = "\n".join([message["content"] for message in transcript])
@@ -295,7 +295,7 @@ def main():
              ]
 
     phone = Phone()
-    logger.info("Initialized phone")
+    logger.debugh("Initialized phone")
 
     while True:
         if OS == "Darwin": # If testing on Mac, skip dialog and dialing and force a digit
@@ -337,7 +337,7 @@ def main():
                 phone.answer_phone(role)
             else:
                 phone.speak(OPERATOR_VOICE_ID, WRONG_NUMBER)
-                logger.info("Waiting for hangup...")
+                logger.debugh("Waiting for hangup...")
                 hook.wait_for_inactive()
 
 if __name__ == "__main__":
