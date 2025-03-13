@@ -57,7 +57,7 @@ DIAL_GPIO = 15
 
 
 # Set up logging
-logging.root.setLevel(logging.DEBUG)
+logging.root.setLevel(logging.INFO)
 formatter = ColoredFormatter(
     "%(reset)s%(log_color)s%(levelname)-8s%(reset)s %(blue)s%(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
