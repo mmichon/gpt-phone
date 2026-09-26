@@ -7,7 +7,7 @@ for architecture.
 ## Rules
 - **The GitHub repo is public.** Never commit `roles.yaml` (personal persona details),
   `.env`, `deploy/env`, or anything with API keys. Grep staged diffs for `sk-`, `sk_`,
-  `AIza` before pushing. `roles.example.yaml` holds only non-personal characters.
+  `AIza`, `AQ.` (newer Gemini keys) before pushing. `roles.example.yaml` holds only non-personal characters.
 - Wrap SSH, rsync and other network commands in `timeout`.
 - Test on the Pi, not just the Mac: audio goes through PipeWire and a USB C-Media
   adapter, and GPIO only exists there.

@@ -48,6 +48,12 @@ fi
 pactl set-default-sink phone_aec_sink || true
 pactl set-default-source phone_aec_source || true
 systemctl --user daemon-reload
+# Wi-Fi power saving on the Pi causes dropouts and latency spikes. The drop-in
+# covers future connections; iw applies it now without reconnecting.
+if [[ ! -f /etc/NetworkManager/conf.d/99-gpt-phone-wifi.conf ]]; then
+  printf '[connection]\nwifi.powersave = 2\n' | sudo tee /etc/NetworkManager/conf.d/99-gpt-phone-wifi.conf >/dev/null
+fi
+sudo iw dev wlan0 set power_save off 2>/dev/null || true
 EOF
 
 if (( CUTOVER )); then
@@ -65,13 +71,15 @@ systemctl --user enable gpt-phone.service
 EOF
 fi
 
-legacy_active=$(remote 'systemctl is-active phone.service 2>/dev/null || true')
-if [[ $legacy_active == active ]]; then
-  echo "!! The legacy phone.service still owns the GPIO pins; not starting the new service."
+# Only a cutover (which enables the unit) hands the phone to the new service;
+# the legacy one merely being stopped (e.g. for a dial test) doesn't count.
+enabled=$(remote 'systemctl --user is-enabled gpt-phone.service 2>/dev/null || true')
+if [[ $enabled == enabled ]]; then
+  can_start=1
+else
+  echo "!! gpt-phone isn't enabled yet, so it wasn't (re)started."
   echo "   Run with --cutover when ready (deploy/rollback-legacy.sh undoes it)."
   can_start=0
-else
-  can_start=1
 fi
 
 if (( TEST )); then
