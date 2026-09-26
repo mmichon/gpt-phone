@@ -6,7 +6,7 @@ import dataclasses
 import pytest
 from google.genai import types
 
-from phone.brain import GeminiBrain
+from phone.brain import SILENCE, UNCLEAR, GeminiBrain
 from phone.config import Config
 
 from .fakes import directory
@@ -231,3 +231,63 @@ async def test_replies_to_statements_are_held_and_to_questions_are_not():
     brain.say("What was it doing there?")
     await tick()
     assert brain._exchange.hold_until is None
+
+
+async def test_a_missing_final_transcript_falls_back_to_the_interim_one():
+    brain = ScriptedBrain()
+    brain.say("", interim="Yes", final=False)
+    await tick()
+    assert brain.asked == [], "waiting for the final transcript"
+    brain._transcript_overdue()
+    await tick(0.4)
+    assert brain.asked == ["Yes"]
+    brain.final("Yes.")  # turns up after all: already answered
+    await tick(0.4)
+    assert brain.asked == ["Yes"] and brain.texts() == [("user", "Yes")]
+
+
+async def test_speech_with_no_words_at_all_is_asked_about():
+    brain = ScriptedBrain()
+    brain.say("", final=False)
+    brain._transcript_overdue()
+    await tick()
+    assert brain.asked == [UNCLEAR]
+    brain.reply("Say again? ", None)
+    await tick()
+    brain.mark_heard()
+    brain.say("Yes.")
+    await tick()
+    assert brain.texts() == [("user", UNCLEAR), ("model", "Say again? "), ("user", "Yes.")]
+
+
+async def test_a_transcript_that_arrives_in_time_is_used_as_usual():
+    brain = ScriptedBrain()
+    brain.say("Yes.")
+    brain._transcript_overdue()
+    await tick()
+    assert brain.asked == ["Yes."]
+
+
+async def test_carrying_on_before_hearing_a_note_reply_drops_the_note():
+    brain = ScriptedBrain()
+    brain.say("", final=False)
+    brain._transcript_overdue()
+    await tick()
+    brain.say("I said yes.")
+    await tick()
+    assert brain.asked[-1] == "I said yes."
+    assert brain.texts() == [("user", "I said yes.")]
+
+
+async def test_a_quiet_caller_is_nudged_only_when_nothing_else_is_going_on():
+    brain = ScriptedBrain()
+    assert not brain.nudge(), "nothing said yet"
+    brain.say("Hi.")
+    await tick()
+    assert not brain.nudge(), "still replying"
+    brain.reply("Hello! Who's this? ", None)
+    await tick()
+    assert brain.nudge()
+    await tick()
+    assert brain.asked[-1] == SILENCE
+    assert [role for role, _ in brain.texts()] == ["user", "model", "user"]

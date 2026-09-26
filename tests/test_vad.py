@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from phone.vad import AUDIO, END, START, SpeechDetector
+from phone.vad import AUDIO, END, IGNORED, START, SpeechDetector
 
 from .e2e.harness import load_line
 
@@ -73,3 +73,20 @@ def test_the_first_syllable_is_kept():
     speech_onset = next(i for i in range(0, len(pcm), 2)
                         if abs(int.from_bytes(pcm[i:i + 2], "little", signed=True)) > 1000)
     assert len(out) >= len(pcm) - speech_onset - 2 * int(0.1 * RATE)
+
+
+def test_a_stretch_reports_its_length_and_peak():
+    detector = SpeechDetector()
+    pcm = trimmed("q2") + silence(1)
+    actions = [a for i in range(0, len(pcm), 1024) for a, _ in detector.feed(pcm[i:i + 1024])]
+    assert END in actions
+    seconds, peak = detector.last_stretch
+    assert abs(seconds - len(trimmed("q2")) / 2 / RATE) < 0.4 and peak > 0.5
+
+
+def test_a_blip_too_short_to_start_speech_is_reported():
+    detector = SpeechDetector(start_ms=10_000)  # nothing is long enough to start
+    pcm = trimmed("q2") + silence(1)
+    actions = [a for i in range(0, len(pcm), 1024) for a, _ in detector.feed(pcm[i:i + 1024])]
+    assert START not in actions and IGNORED in actions
+    assert detector.last_stretch[1] >= 0.3

@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from phone.brain import BrainError, Interrupted, Reply, ReplyDone, SpeechEnded, SpeechStarted
+from phone.brain import BrainError, Heard, Interrupted, Reply, ReplyDone, SpeechEnded, SpeechStarted
 from phone.call import Call
 from phone.config import Config
 from phone.switchboard import Deps
@@ -33,6 +33,10 @@ class FakeBrain:
 
     def mark_heard(self):
         self.heard = True
+
+    def nudge(self):
+        self.nudges = getattr(self, "nudges", 0) + 1
+        return True
 
     async def events(self):
         while True:
@@ -236,4 +240,33 @@ async def test_a_held_reply_does_not_play_early(setup):
     assert b"Go on." not in player.played, "held: shouldn't play yet"
     await asyncio.sleep(0.2)
     assert b"Go on." in player.played
+    task.cancel()
+
+
+async def test_a_quiet_caller_is_nudged_once_then_asked_if_they_are_there(setup):
+    make, brains, tts, player, _ = setup
+    cfg = Config(None, None, nudge_s=1, still_there_s=2.5, give_up_s=3600)
+    task = await start(make(cfg=cfg))
+    brain = brains[0]
+    await asyncio.sleep(1.1)
+    assert getattr(brain, "nudges", 0) == 1
+    await asyncio.sleep(2)
+    assert brain.nudges == 1, "once per silence"
+    assert b"Hello? Are you still there?" in player.played
+    task.cancel()
+
+
+async def test_speech_without_words_does_not_reset_the_silence(setup):
+    make, brains, tts, player, _ = setup
+    cfg = Config(None, None, nudge_s=1, still_there_s=3600, give_up_s=3600)
+    task = await start(make(cfg=cfg))
+    brain = brains[0]
+    await asyncio.sleep(0.5)
+    brain.script.put_nowait(SpeechStarted())
+    brain.script.put_nowait(SpeechEnded())  # a noise: no Heard follows
+    await asyncio.sleep(0.7)
+    assert getattr(brain, "nudges", 0) == 1
+    brain.script.put_nowait(Heard("Yes."))  # real words: they can be nudged again later
+    await asyncio.sleep(2.1)
+    assert brain.nudges == 2
     task.cancel()

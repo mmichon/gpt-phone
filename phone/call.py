@@ -111,6 +111,8 @@ class Call:
         self._heard_at = None
         self._heard_timer = None
         self._last_activity = time.monotonic()
+        self._caller_talking = False
+        self._heard_count = 0
         self._mute_until = 0.0
 
     async def run(self):
@@ -159,17 +161,20 @@ class Call:
             now = time.monotonic()
             match event:
                 case SpeechStarted():
-                    self._last_activity = now
+                    self._caller_talking = True
                     self.observe("speech_started")
                     if self.cfg.barge_in and self.speaker.busy:
                         await self._interrupt(chunker)
                     self.speaker.prewarm()
                 case SpeechEnded(t=t):
-                    self._last_activity = now
+                    # Only speech that turns into words counts as the caller being there
+                    # (see Heard): a noise that transcribes to nothing mustn't hold off the nudge.
+                    self._caller_talking = False
                     self._speech_end = t
                     self.observe("speech_ended")
                 case Heard(text=text):
                     self._last_activity = self._heard_at = now
+                    self._heard_count += 1
                     log.info("Caller: %s", text.strip())
                     self.observe("heard", text=text)
                 case Reply(text=text, hold_until=hold_until):
@@ -228,13 +233,20 @@ class Call:
             self.observe("latency", turn=self._turn, **ms)
 
     async def _watch_silence(self):
-        prompted = False
+        prompted = nudged = False
+        heard = 0
         while True:
             await asyncio.sleep(1)
-            if self.speaker.busy:
+            if self.speaker.busy or self._caller_talking:
                 self._last_activity = time.monotonic()
                 continue
+            if heard != self._heard_count:
+                heard, nudged = self._heard_count, False  # the caller spoke: they can be nudged again
             quiet = time.monotonic() - self._last_activity
+            if quiet > self.cfg.nudge_s and not nudged:
+                nudged = True  # once per silence: a nudge, then "still there?", then hang up
+                if self.brain.nudge():
+                    continue
             if quiet > self.cfg.give_up_s:
                 log.info("Caller silent for %ds; ending call", quiet)
                 return

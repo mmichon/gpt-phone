@@ -49,7 +49,7 @@ class Config:
     pickup_delay_s: float = 1.0  # silence after the handset lifts, before the operator speaks
     barge_in: bool = True        # let callers interrupt the character (needs echo cancellation)
     vad_threshold: float = 0.5   # Silero speech probability that counts as speech
-    vad_start_ms: int = 96       # this much speech starts a turn (so clicks don't)
+    vad_start_ms: int = 64       # this much speech starts a turn (so clicks don't)
     vad_silence_ms: int = 500    # this much silence ends a stretch of speech
     vad_preroll_ms: int = 320    # audio kept from just before speech was confirmed
     turn_grace_s: float = 0.8    # extra wait when a pause comes mid-sentence
@@ -57,6 +57,7 @@ class Config:
     heard_after_s: float = 0.5   # once this much of a reply has played, the caller has heard it
     statement_hold_s: float = 0.9  # a reply to a statement (not a question) plays no sooner than this
                                    # after speech ends, in case the caller is pausing mid-story
+    nudge_s: float = 6.0         # caller silence after a reply before the character speaks up again
     still_there_s: float = 12.0  # caller silence before "are you still there?"
     give_up_s: float = 120.0     # caller silence before the call is dropped
 
@@ -82,4 +83,5 @@ class Config:
             vad_threshold=float(_env("PHONE_VAD_THRESHOLD", defaults.vad_threshold)),
             vad_silence_ms=int(_env("PHONE_VAD_SILENCE_MS", defaults.vad_silence_ms)),
             turn_grace_s=float(_env("PHONE_TURN_GRACE_S", defaults.turn_grace_s)),
+            nudge_s=float(_env("PHONE_NUDGE_S", defaults.nudge_s)),
         )

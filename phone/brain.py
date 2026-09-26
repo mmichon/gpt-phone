@@ -22,6 +22,12 @@ Yielding: if the caller carries on before they've heard much of the reply
 said is answered together, like two people who start talking at once. If
 they've heard it, it's a real interruption: the reply stops, cut short.
 
+Not hearing anything: if a stretch's final transcript never comes (short words
+sometimes come back empty), its interim transcript stands in for it; with no
+words at all, the character says it couldn't make that out. And if the caller
+says nothing for a while after a reply, the character speaks up again (nudge()).
+Both go to the text model as a [bracketed note] instead of the caller's words.
+
 Thinking: each turn goes to a fast Gemini text model, and the reply streams
 back piece by piece for the character's voice to speak.
 
@@ -52,6 +58,9 @@ log = logging.getLogger(__name__)
 
 LANGUAGE_CODES = {"en": "en-US", "pl": "pl-PL"}
 FINAL_WAIT_S = 0.8  # longest a new stretch of speech waits for the previous transcript
+TRANSCRIPT_TIMEOUT_S = 1.5  # after this, a stretch's final transcript isn't coming
+UNCLEAR = "[The caller said something short, but the line crackled and you couldn't make it out.]"
+SILENCE = "[A few seconds of silence on the line; the caller hasn't answered.]"
 SENTENCE_DONE = re.compile(r"[.?!…][\"')\]]*\s*$")
 CONTINUING = re.compile(r"([,;:—–-]|\b(and|but|so|or|because|then|that|like|um+|uh+|if|when|with))\s*$", re.I)
 
@@ -116,6 +125,7 @@ class _Exchange:
     done: bool = False
     user_index: int = 0          # where the caller's turn sits in the history
     hold_until: float = None     # see Reply.hold_until
+    note: bool = False           # answering a [note] about the call, not the caller's words
 
     @property
     def asked(self):
@@ -146,6 +156,9 @@ class GeminiBrain:
         self._final_due = asyncio.Event()  # clear while a stretch's final transcript is awaited
         self._final_due.set()
         self._final_timer = None
+        self._overdue_timer = None
+        self._awaiting_final = False  # a stretch has ended and its final transcript hasn't come
+        self._drop_late_final = False  # ...and we gave up on it, so if it turns up, ignore it
         self._sender = None
 
     # Listening
@@ -202,6 +215,8 @@ class GeminiBrain:
             if task:
                 task.cancel()
         self._cancel_turn_timer()
+        if self._overdue_timer:
+            self._overdue_timer.cancel()
         context, self._context, self.session = self._context, None, None
         if context:
             await self._close_context(context)
@@ -223,8 +238,13 @@ class GeminiBrain:
                 self._outbox.put_nowait(
                     {"audio": types.Blob(data=data, mime_type=f"audio/pcm;rate={self.cfg.mic_rate}")})
             elif action == vad.END:
+                seconds, peak = self.detector.last_stretch
+                log.info("Speech %.2f s (peak p=%.2f)", seconds, peak)
                 self._outbox.put_nowait({"activity_end": types.ActivityEnd()})
                 self.speech_ended()
+            elif action == vad.IGNORED:
+                seconds, peak = self.detector.last_stretch
+                log.info("Possible speech ignored (peak p=%.2f, %d ms)", peak, seconds * 1000)
 
     async def _send_loop(self):
         try:
@@ -235,7 +255,11 @@ class GeminiBrain:
                 await self._send(**message)
                 if "activity_end" in message:
                     self._final_due.clear()
-                    self._final_timer = asyncio.get_running_loop().call_later(FINAL_WAIT_S, self._final_due.set)
+                    loop = asyncio.get_running_loop()
+                    self._final_timer = loop.call_later(FINAL_WAIT_S, self._final_due.set)
+                    if self._overdue_timer:
+                        self._overdue_timer.cancel()
+                    self._overdue_timer = loop.call_later(TRANSCRIPT_TIMEOUT_S, self._transcript_overdue)
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -297,6 +321,7 @@ class GeminiBrain:
         self._caller_talking = True
         self._segment_open = True
         self._interim = ""
+        self._drop_late_final = False
         self._cancel_turn_timer()
         self._emit(SpeechStarted())
         exchange = self._exchange
@@ -311,6 +336,7 @@ class GeminiBrain:
         log.debug("Speech ended; interim transcript so far: %r", self._interim)
         self._caller_talking = False
         self._speech_ended_at = time.monotonic()
+        self._awaiting_final = True
         # Detection lags the last word by the silence it takes to be sure speech has ended.
         self._emit(SpeechEnded(t=self._speech_ended_at - self.cfg.vad_silence_ms / 1000))
         self._schedule_turn()
@@ -318,6 +344,10 @@ class GeminiBrain:
     def heard(self, text):
         """A final transcript of the last stretch of speech."""
         log.debug("Final transcript: %r", text)
+        if self._drop_late_final:
+            log.info("Transcript arrived too late; ignoring it: %r", text)
+            return
+        self._awaiting_final = False
         self._final_due.set()
         if self._final_timer:
             self._final_timer.cancel()
@@ -336,6 +366,41 @@ class GeminiBrain:
             return
         self._pending = f"{self._pending} {text}".strip()
         self._schedule_turn()
+
+    def _transcript_overdue(self):
+        """A stretch of speech ended a while ago and its final transcript hasn't come."""
+        self._overdue_timer = None
+        if not self._awaiting_final:
+            return
+        self._awaiting_final = False
+        self._final_due.set()
+        if self._caller_talking:
+            return  # they carried on; the next transcript will get things moving
+        seconds, _ = self.detector.last_stretch
+        interim = self._interim
+        if interim:
+            log.info("No transcript for a %.2f s stretch; using the interim one: %r", seconds, interim)
+            self.heard(interim)
+            self._drop_late_final = True
+            return
+        log.info("No transcript for a %.2f s stretch", seconds)
+        self._drop_late_final = True
+        self._segment_open = False
+        if self._pending:
+            self._schedule_turn()
+        elif not self._exchange or self._exchange.done:
+            self._answer_note(UNCLEAR)
+
+    def nudge(self):
+        """The caller has gone quiet after a reply: have the character speak up again.
+        Returns whether it did (not while anything else is going on)."""
+        exchange = self._exchange
+        if (self._caller_talking or self._segment_open or self._pending or self._turn_timer
+                or not exchange or not exchange.done):
+            return False
+        log.info("Caller quiet after the reply; nudging them")
+        self._answer_note(SILENCE)
+        return True
 
     def mark_heard(self):
         """The caller has now heard enough of the current reply that it counts as said."""
@@ -387,6 +452,12 @@ class GeminiBrain:
         if not exchange.asked.rstrip("\"') ").endswith("?"):
             exchange.hold_until = self._speech_ended_at + self.cfg.statement_hold_s
         log.debug("Answering from the %s transcript: %s", "interim" if speculative else "final", exchange.asked)
+        self._begin(exchange)
+
+    def _answer_note(self, note):
+        self._begin(_Exchange(base=note, segment="", segment_final=True, note=True))
+
+    def _begin(self, exchange):
         exchange.user_index = len(self.history)
         self.history.append(_turn("user", exchange.asked))
         self._exchange = exchange
@@ -423,7 +494,10 @@ class GeminiBrain:
         exchange.task.cancel()
         del self.history[exchange.user_index:]
         self._exchange = None
-        self._pending = exchange.base if not exchange.segment_final else exchange.asked
+        if exchange.note:
+            self._pending = ""
+        else:
+            self._pending = exchange.base if not exchange.segment_final else exchange.asked
         # (If its final transcript is still on the way, heard() will add it to _pending.)
         if exchange.said:
             self._emit(Retracted())
