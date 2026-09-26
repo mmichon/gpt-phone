@@ -43,8 +43,10 @@ class Config:
     mic_rate: int = 16000        # what Gemini Live expects
     out_rate: int = 24000        # what ElevenLabs pcm_24000 produces
     mic_block_ms: int = 32       # one Silero VAD frame (512 samples)
+    volume: float = 0.8          # software gain on everything played
 
     # Conversation behavior
+    pickup_delay_s: float = 1.0  # silence after the handset lifts, before the operator speaks
     barge_in: bool = True        # let callers interrupt the character (needs echo cancellation)
     vad_threshold: float = 0.5   # Silero speech probability that counts as speech
     vad_start_ms: int = 96       # this much speech starts a turn (so clicks don't)
@@ -55,7 +57,7 @@ class Config:
     heard_after_s: float = 0.5   # once this much of a reply has played, the caller has heard it
     statement_hold_s: float = 0.9  # a reply to a statement (not a question) plays no sooner than this
                                    # after speech ends, in case the caller is pausing mid-story
-    still_there_s: float = 20.0  # caller silence before "are you still there?"
+    still_there_s: float = 12.0  # caller silence before "are you still there?"
     give_up_s: float = 120.0     # caller silence before the call is dropped
 
     # Timeouts (seconds)
@@ -75,6 +77,7 @@ class Config:
             tts_model=_env("PHONE_TTS_MODEL", defaults.tts_model),
             roles_file=Path(_env("PHONE_ROLES_FILE", defaults.roles_file)).expanduser(),
             cache_dir=Path(_env("PHONE_CACHE_DIR", defaults.cache_dir)).expanduser(),
+            volume=float(_env("PHONE_VOLUME", defaults.volume)),
             barge_in=_env_bool("PHONE_BARGE_IN", defaults.barge_in),
             vad_threshold=float(_env("PHONE_VAD_THRESHOLD", defaults.vad_threshold)),
             vad_silence_ms=int(_env("PHONE_VAD_SILENCE_MS", defaults.vad_silence_ms)),

@@ -17,11 +17,11 @@ def fast_timeouts(monkeypatch):
     FakeCall.instances.clear()
 
 
-def board(call=FakeCall, offline=False, greeting="dial please"):
+def board(call=FakeCall, offline=False, greeting="dial please", pickup_delay_s=0):
     player = FakePlayer()
     deps = sb.Deps(mic=None, player=player, tts=None, cache=FakeCache(offline), sounds=FakeSounds())
     statuses = []
-    b = sb.Switchboard(Config(None, None), directory(greeting), FakeHardware(), deps,
+    b = sb.Switchboard(Config(None, None, pickup_delay_s=pickup_delay_s), directory(greeting), FakeHardware(), deps,
                        status=statuses.append, call_factory=call)
     b.start()
     return b, player, statuses
@@ -45,6 +45,15 @@ async def test_dialing_a_role_starts_a_call_with_it():
     await dial(b, 7)
     assert [c.role.name for c in FakeCall.instances] == ["God"]
     assert statuses[-1] == "in call: God"
+
+
+async def test_the_operator_waits_a_moment_after_pickup():
+    b, player, statuses = board(pickup_delay_s=0.1)
+    b.handle(OffHook())
+    await settle(0.05)
+    assert player.texts() == []
+    await settle(0.1)
+    assert player.texts() == ["dial please"]
 
 
 async def test_zero_reads_the_directory_then_accepts_a_digit():

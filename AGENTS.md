@@ -15,7 +15,8 @@ for architecture.
 
 ## Commands
 - Unit tests (Mac or Pi): `.venv/bin/python -m pytest`
-- Deploy: `deploy/deploy.sh` (add `--test` to run the e2e suite on the Pi)
+- Deploy: `deploy/deploy.sh`. Add `--test` to run the e2e suite on the Pi only for major
+  changes (pipeline, brain or audio-path rewrites); routine tweaks need just the unit tests.
 - Resilience tests (from the Mac, disruptive): `.venv/bin/python -m pytest -m system tests/system`
 - Local run: `.venv/bin/python -m phone --no-gpio --role N`
 - Logs on the Pi: `journalctl --user -u gpt-phone -f`

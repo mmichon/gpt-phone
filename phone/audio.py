@@ -24,8 +24,9 @@ SAMPLE_BYTES = 2
 class Player:
     """A speaker stream fed from a byte buffer. flush() silences it immediately."""
 
-    def __init__(self, rate, device=None, tap=None):
+    def __init__(self, rate, device=None, tap=None, volume=1.0):
         self.rate = rate
+        self.volume = volume
         self.tap = tap           # tap(t, pcm) is called from the audio thread with audio as it plays
         self.on_start = None     # on_start(t) is called on the loop when audio starts after silence
         self._buffer = bytearray()
@@ -60,6 +61,7 @@ class Player:
     def write(self, pcm):
         if not pcm:
             return
+        pcm = scale(pcm, self.volume)
         with self._lock:
             self._buffer += pcm
         self._drained.clear()
@@ -173,6 +175,14 @@ def tone(rate, freqs, seconds, on=None, off=None, volume=0.15):
 def reorder_tone(rate, seconds=10.0):
     """Fast busy: the network couldn't complete the call."""
     return tone(rate, (480, 620), seconds, on=0.25, off=0.25)
+
+
+def scale(pcm, volume):
+    """Scale 16-bit PCM by a gain factor."""
+    if volume == 1.0:
+        return pcm
+    samples = np.frombuffer(pcm[:len(pcm) - len(pcm) % SAMPLE_BYTES], dtype=np.int16)
+    return (samples * volume).clip(-32768, 32767).astype(np.int16).tobytes()
 
 
 def silence(rate, seconds):

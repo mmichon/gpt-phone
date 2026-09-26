@@ -134,7 +134,7 @@ async def serve(cfg, args):
         hardware = GpioHardware(cfg.hook_gpio, cfg.dial_gpio)
 
     mic = Mic(cfg.mic_rate, cfg.mic_block_ms)
-    player = Player(cfg.out_rate)
+    player = Player(cfg.out_rate, volume=cfg.volume)
     mic.open()
     player.open()
     tts = ElevenLabsTTS(cfg.elevenlabs_api_key, cfg.tts_model, cfg.out_rate, cfg.tts_connect_timeout)

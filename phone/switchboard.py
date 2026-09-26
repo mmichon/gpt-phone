@@ -104,6 +104,7 @@ class Switchboard:
             await self._busy()
 
     async def _session_body(self):
+        await asyncio.sleep(self.cfg.pickup_delay_s)
         self._set_status("operator")
         digit = await self._operator()
         if digit is None:
