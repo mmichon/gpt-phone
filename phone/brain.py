@@ -1,8 +1,11 @@
 """The listening-and-thinking half of a call: one Gemini Live session.
 
 Mic audio streams in continuously. Gemini's server-side voice activity
-detection decides when the caller has finished a turn, and the reply streams
-back as text for the TTS voice to speak. Events:
+detection decides when the caller has finished a turn. Gemini Live models only
+reply in audio, so the session runs in audio mode with output transcription on:
+the transcript of each reply streams back as text, arriving as fast as the
+audio itself (about 0.7 s after the caller stops), and the character's
+ElevenLabs voice speaks it. Gemini's own audio is discarded. Events:
 
   SpeechStarted / SpeechEnded   the caller started / stopped talking
   Heard(text)                   transcription of the caller (for logs and tests)
@@ -64,6 +67,8 @@ class GeminiLiveBrain:
         self.session = None
         self._context = None
         self._resume_handle = None
+        self._server_vad = False       # has the server sent voice activity messages?
+        self._caller_talking = False
 
     def _config(self):
         sensitivity = types.AutomaticActivityDetection(
@@ -75,9 +80,10 @@ class GeminiLiveBrain:
             silence_duration_ms=self.cfg.vad_silence_ms,
         )
         return types.LiveConnectConfig(
-            response_modalities=[types.Modality.TEXT],
+            response_modalities=[types.Modality.AUDIO],
             system_instruction=self.role.system_instruction(),
             input_audio_transcription=types.AudioTranscriptionConfig(),
+            output_audio_transcription=types.AudioTranscriptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(
                 automatic_activity_detection=sensitivity,
                 activity_handling=(types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS if self.cfg.barge_in
@@ -157,20 +163,29 @@ class GeminiLiveBrain:
             self._resume_handle = message.session_resumption_update.new_handle or self._resume_handle
         activity = message.voice_activity
         if activity and activity.voice_activity_type:
+            self._server_vad = True
             if activity.voice_activity_type == types.VoiceActivityType.ACTIVITY_START:
+                self._caller_talking = True
                 yield SpeechStarted()
             elif activity.voice_activity_type == types.VoiceActivityType.ACTIVITY_END:
+                self._caller_talking = False
                 yield SpeechEnded()
         content = message.server_content
         if not content:
             return
-        if content.input_transcription and content.input_transcription.text:
-            yield Heard(content.input_transcription.text)
+        heard = content.input_transcription and content.input_transcription.text
+        if (heard or content.interim_input_transcription) and not self._caller_talking and not self._server_vad:
+            # No voice activity messages from this model: the first words transcribed
+            # mark the caller starting to talk (which is what barge-in needs).
+            self._caller_talking = True
+            yield SpeechStarted()
+        if heard:
+            yield Heard(heard)
         if content.interrupted:
             yield Interrupted()
-        if content.model_turn:
-            for part in content.model_turn.parts or []:
-                if part.text and not part.thought:
-                    yield Reply(part.text)
+        if content.output_transcription and content.output_transcription.text:
+            if not self._server_vad:
+                self._caller_talking = False
+            yield Reply(content.output_transcription.text)
         if content.turn_complete and not content.interrupted:
             yield ReplyDone()
