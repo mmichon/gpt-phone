@@ -164,8 +164,9 @@ class Call:
                     if self.cfg.barge_in and self.speaker.busy:
                         await self._interrupt(chunker)
                     self.speaker.prewarm()
-                case SpeechEnded():
-                    self._last_activity = self._speech_end = now
+                case SpeechEnded(t=t):
+                    self._last_activity = now
+                    self._speech_end = t
                     self.observe("speech_ended")
                 case Heard(text=text):
                     self._last_activity = self._heard_at = now
@@ -222,7 +223,7 @@ class Call:
         if "text" in marks and "play" not in marks:
             marks["play"] = t
             ms = {k: round((marks[k] - marks["eos"]) * 1000) for k in ("text", "tts", "play") if k in marks}
-            log.info("Turn %d latency: speech end → text %s ms, → TTS audio %s ms, → playing %s ms",
+            log.info("Turn %d latency from the caller's last word: text %s ms, TTS audio %s ms, playing %s ms",
                      self._turn, ms.get("text"), ms.get("tts"), ms.get("play"))
             self.observe("latency", turn=self._turn, **ms)
 

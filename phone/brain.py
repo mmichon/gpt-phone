@@ -63,7 +63,7 @@ class SpeechStarted:
 
 @dataclass
 class SpeechEnded:
-    t: float = field(default_factory=time.monotonic)
+    t: float = field(default_factory=time.monotonic)  # when the caller's last word ended
 
 
 @dataclass
@@ -311,7 +311,8 @@ class GeminiBrain:
         log.debug("Speech ended; interim transcript so far: %r", self._interim)
         self._caller_talking = False
         self._speech_ended_at = time.monotonic()
-        self._emit(SpeechEnded())
+        # Detection lags the last word by the silence it takes to be sure speech has ended.
+        self._emit(SpeechEnded(t=self._speech_ended_at - self.cfg.vad_silence_ms / 1000))
         self._schedule_turn()
 
     def heard(self, text):
