@@ -12,18 +12,25 @@ USB audio adapter driving the handset's earpiece and mouthpiece.
 ```
 hook/dial (GPIO) ─► switchboard: idle → operator → dial → call → idle
                                                      │
- mouthpiece ─► echo canceller ─► Gemini Live ──text──► ElevenLabs ──audio──► earpiece
- (16 kHz, streamed continuously)  (hears, decides     (streaming TTS,
-                                   when you're done,   the character's
-                                   thinks, replies)    voice)
+ mouthpiece ─► echo canceller ─► Silero VAD ─► Gemini Transcribe ─► Gemini Flash-Lite ─► ElevenLabs ─► earpiece
+               (+ noise           (on the Pi:    Live (streams       (writes the reply,   (the character's
+                suppression)       when you       your words)         in character)        voice, streamed)
+                                   talk)
 ```
 
-- **Listening and thinking**: one [Gemini Live](https://ai.google.dev/gemini-api/docs/live) session per call.
-  Server-side voice activity detection decides when the caller has finished (no more
-  cutting people off mid-sentence), and callers can interrupt the character.
+- **Hearing the caller**: a local [Silero](https://github.com/snakers4/silero-vad)
+  voice activity detector decides when you start and stop talking (coughs and hiss
+  don't count), and exactly that audio goes to Gemini Transcribe Live.
+- **Knowing when you're done**: a finished question is answered at once; a pause
+  mid-sentence, or after "and…", gets a grace period; a reply to a statement waits a
+  moment in case you're only pausing. If you carry on before you've heard the reply,
+  the character yields and answers everything you said together.
+- **Thinking**: `gemini-3.5-flash-lite` writes each reply (~0.6 s to first word).
 - **Voice**: [ElevenLabs](https://elevenlabs.io) WebSocket streaming. Each phrase is
   spoken as soon as it's written, so the character starts talking before it has
-  finished thinking.
+  finished thinking. You can interrupt it at any time.
+- **Latency**, measured end to end on the phone: about 1.25 s median from the end of
+  your words to the character's voice.
 - **Operator prompts and greetings** are rendered once and cached on disk, so they play
   instantly and even without a network. If everything fails, callers hear a busy
   signal, never silence.
@@ -33,8 +40,10 @@ hook/dial (GPIO) ─► switchboard: idle → operator → dial → call → idl
   hangs and lost audio devices, and starts cleanly at boot even before Wi-Fi is up.
 
 Code lives in `phone/`: `switchboard.py` (state machine), `call.py` (the concurrent
-call pipeline), `brain.py` (Gemini Live), `tts.py` (ElevenLabs and the prompt cache),
-`audio.py` (mic/speaker streams), `hardware.py` (hook and dial), `roles.py`.
+call pipeline), `brain.py` (listening, turn-taking, replies), `vad.py` (voice
+activity), `tts.py` (ElevenLabs and the prompt cache), `audio.py` (mic/speaker
+streams), `hardware.py` (hook and dial), `roles.py`. `spikes/` has the experiments
+behind these choices.
 
 ## Hardware
 
@@ -46,13 +55,16 @@ Pins are set in `phone/config.py`.
 
 ## Setup
 
-You need a [Gemini API key](https://aistudio.google.com/apikey) and a **paid**
-ElevenLabs plan (the free tier refuses Voice Library voices over the API).
+You need a [Gemini API key](https://aistudio.google.com/apikey) and a paid ElevenLabs
+account (the free tier refuses Voice Library voices over the API).
 
 1. Characters: copy `roles.example.yaml` to `roles.yaml` and edit it. Each role has a
    name (read out in the directory), an ElevenLabs `voice_id`, a greeting and a
-   persona, plus optional `ringback` (a file in `sounds/`), `language` and
-   `still_there`. `roles.yaml` is gitignored because personas tend to be personal.
+   persona, plus optional `ringback` (a file in `sounds/`), `language`,
+   `still_there`, and `paused: true` (unlisted; dialing it gets the busy message).
+   `roles.yaml` is gitignored because personas tend to be personal. Voice Library
+   voices must be added to your ElevenLabs account ("My Voices") to work over the
+   API, and instantly cloned voices need a plan that includes cloning.
 2. Keys, on the Pi, in `~/.config/gpt-phone/env` (`chmod 600`); see `deploy/env.example`:
    ```sh
    GEMINI_API_KEY=...

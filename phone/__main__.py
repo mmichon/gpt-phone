@@ -18,7 +18,14 @@ from .tts import ElevenLabsTTS, PromptCache
 log = logging.getLogger("phone")
 
 HEARTBEAT_S = 5
-SERVICE_RETRY_S = 60
+
+
+def retry_delays():
+    """Quick retries first (at boot the network is often seconds away), then once a minute."""
+    delay = 5
+    while True:
+        yield delay
+        delay = min(delay * 2, 60)
 
 
 def sd_notify(message):
@@ -68,6 +75,7 @@ def _elevenlabs_subscription(api_key):
 
 async def check_services(cfg, status):
     """Validate API keys (keeps retrying while the network is down)."""
+    delays = retry_delays()
     while True:
         ok = True
         try:
@@ -91,13 +99,14 @@ async def check_services(cfg, status):
             status.problem("gemini", f"gemini: {e}")
         if ok:
             return
-        await asyncio.sleep(SERVICE_RETRY_S)
+        await asyncio.sleep(next(delays))
 
 
 async def warm_cache(cache, directory, status):
+    delays = retry_delays()
     while missing := await cache.warm(directory.prompts()):
         status.problem("prompts", f"{missing} prompts not cached")
-        await asyncio.sleep(SERVICE_RETRY_S)
+        await asyncio.sleep(next(delays))
     status.problem("prompts")
     log.info("All fixed prompts are cached")
 
