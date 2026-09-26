@@ -297,3 +297,28 @@ async def test_a_caller_quiet_after_the_greeting_is_nudged():
     assert brain.nudge()
     await tick()
     assert brain.asked == [SILENCE]
+
+
+async def test_chopped_up_speech_is_asked_about_once_the_caller_goes_quiet(monkeypatch):
+    import phone.brain
+    monkeypatch.setattr(phone.brain, "MISSED_WAIT_S", 0.05)
+    brain = ScriptedBrain()
+    brain.near_miss(0.032, 0.35)
+    await tick(0.1)
+    assert not brain.ask_to_repeat(), "one faint blip is just noise"
+    brain.near_miss(0.064, 0.59)
+    assert not brain.ask_to_repeat(), "wait for them to finish"
+    await tick(0.1)
+    assert brain.ask_to_repeat()
+    await tick()
+    assert brain.asked == [UNCLEAR]
+    assert not brain.ask_to_repeat(), "only once"
+
+
+async def test_speech_that_does_come_through_cancels_the_question():
+    brain = ScriptedBrain()
+    brain.near_miss(0.096, 0.75)
+    brain.say("It's Michael.")
+    await tick()
+    assert not brain.ask_to_repeat()
+    assert brain.asked == ["It's Michael."]

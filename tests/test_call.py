@@ -34,6 +34,9 @@ class FakeBrain:
     def mark_heard(self):
         self.heard = True
 
+    def ask_to_repeat(self):
+        return False
+
     def nudge(self):
         self.nudges = getattr(self, "nudges", 0) + 1
         return True

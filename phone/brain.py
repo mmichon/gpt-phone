@@ -24,7 +24,9 @@ they've heard it, it's a real interruption: the reply stops, cut short.
 
 Not hearing anything: if a stretch's final transcript never comes (short words
 sometimes come back empty), its interim transcript stands in for it; with no
-words at all, the character says it couldn't make that out. And if the caller
+words at all, the character says it couldn't make that out. The same goes for
+speech so chopped up (by the echo canceller, talking over the character) that it
+only shows up as scattered near-misses and never starts a stretch. And if the caller
 says nothing for a while after a reply, the character speaks up again (nudge()).
 Both go to the text model as a [bracketed note] instead of the caller's words.
 
@@ -59,6 +61,7 @@ log = logging.getLogger(__name__)
 LANGUAGE_CODES = {"en": "en-US", "pl": "pl-PL"}
 FINAL_WAIT_S = 0.8  # longest a new stretch of speech waits for the previous transcript
 TRANSCRIPT_TIMEOUT_S = 1.5  # after this, a stretch's final transcript isn't coming
+MISSED_WAIT_S = 1.0  # quiet after chopped-up speech before asking the caller to say it again
 UNCLEAR = "[The caller said something short, but the line crackled and you couldn't make it out.]"
 SILENCE = "[A few seconds of silence on the line; the caller hasn't answered.]"
 SENTENCE_DONE = re.compile(r"[.?!…][\"')\]]*\s*$")
@@ -159,6 +162,8 @@ class GeminiBrain:
         self._overdue_timer = None
         self._awaiting_final = False  # a stretch has ended and its final transcript hasn't come
         self._drop_late_final = False  # ...and we gave up on it, so if it turns up, ignore it
+        self._blips = []                # recent near-misses: (time, seconds, peak)
+        self._missed_at = None          # when near-misses last added up to probable speech
         self._sender = None
 
     # Listening
@@ -245,6 +250,7 @@ class GeminiBrain:
             elif action == vad.IGNORED:
                 seconds, peak, db = self.detector.last_stretch
                 log.info("Possible speech ignored (peak p=%.2f, %d ms, loudest %.0f dBFS)", peak, seconds * 1000, db)
+                self.near_miss(seconds, peak)
 
     async def _send_loop(self):
         try:
@@ -322,6 +328,7 @@ class GeminiBrain:
         self._segment_open = True
         self._interim = ""
         self._drop_late_final = False
+        self._blips, self._missed_at = [], None
         self._cancel_turn_timer()
         self._emit(SpeechStarted())
         exchange = self._exchange
@@ -391,12 +398,32 @@ class GeminiBrain:
         elif not self._exchange or self._exchange.done:
             self._answer_note(UNCLEAR)
 
+    def near_miss(self, seconds, peak):
+        """Something that nearly counted as speech. Several close together probably were."""
+        now = time.monotonic()
+        self._blips = [b for b in self._blips if now - b[0] < 2.0] + [(now, seconds, peak)]
+        if sum(b[1] for b in self._blips) >= 0.09 and max(b[2] for b in self._blips) >= 0.5:
+            self._missed_at = now
+
+    def ask_to_repeat(self):
+        """If the caller seems to have said something that never came through, and has
+        since gone quiet, have the character ask them to say it again. Returns whether it did."""
+        if not self._missed_at or time.monotonic() - self._missed_at < MISSED_WAIT_S or not self._idle():
+            return False
+        self._blips, self._missed_at = [], None
+        log.info("Caller's words seem to have been lost; asking them to repeat")
+        self._answer_note(UNCLEAR)
+        return True
+
+    def _idle(self):
+        exchange = self._exchange  # None before the first exchange: the greeting was the last word
+        return not (self._caller_talking or self._segment_open or self._pending or self._turn_timer
+                    or (exchange and not exchange.done))
+
     def nudge(self):
         """The caller has gone quiet after a reply (or the greeting): have the character speak up again.
         Returns whether it did (not while anything else is going on)."""
-        exchange = self._exchange  # None before the first exchange: the greeting was the last word
-        if (self._caller_talking or self._segment_open or self._pending or self._turn_timer
-                or (exchange and not exchange.done)):
+        if not self._idle():
             return False
         log.info("Caller quiet after the reply; nudging them")
         self._answer_note(SILENCE)

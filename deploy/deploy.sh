@@ -47,11 +47,13 @@ if ! cmp -s deploy/60-echo-cancel.conf ~/.config/pipewire/pipewire.conf.d/60-ech
 fi
 pactl set-default-sink phone_aec_sink || true
 pactl set-default-source phone_aec_source || true
-# Mic gain all the way up: the handset's mouthpiece is quiet, and soft words
-# otherwise don't score as speech. Both the adapter's own gain and PipeWire's.
+# Fixed mic gain, and the adapter's own auto gain off: gain that keeps changing
+# under the echo canceller breaks it, and it then chops up the caller's words.
+# Maxed out (+23 dB, with auto gain) speech peaked near -5 dBFS; aim for ~-15.
 card=$(awk '/C-Media/ {print $1; exit}' /proc/asound/cards)
 if [[ -n $card ]]; then
-  amixer -q -c "$card" sset Mic capture 100% cap || true
+  amixer -q -c "$card" sset 'Auto Gain Control' off || true
+  amixer -q -c "$card" sset Mic capture 26 cap || true
   sudo alsactl store "$card" 2>/dev/null || true
 fi
 pactl set-source-volume alsa_input.usb-C-Media_Electronics_Inc._USB_Audio_Device-00.mono-fallback 100% || true

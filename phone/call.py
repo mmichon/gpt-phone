@@ -236,9 +236,11 @@ class Call:
         prompted = nudged = False
         heard = 0
         while True:
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.25)
             if self.speaker.busy or self._caller_talking:
                 self._last_activity = time.monotonic()
+                continue
+            if self.brain.ask_to_repeat():
                 continue
             if heard != self._heard_count:
                 heard, nudged = self._heard_count, False  # the caller spoke: they can be nudged again

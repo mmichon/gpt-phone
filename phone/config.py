@@ -51,7 +51,7 @@ class Config:
     vad_threshold: float = 0.5   # Silero speech probability that counts as speech
     vad_start_ms: int = 64       # this much speech starts a turn (so clicks don't)
     vad_silence_ms: int = 500    # this much silence ends a stretch of speech
-    vad_preroll_ms: int = 320    # audio kept from just before speech was confirmed
+    vad_preroll_ms: int = 480    # audio kept from just before speech was confirmed
     turn_grace_s: float = 0.8    # extra wait when a pause comes mid-sentence
     turn_grace_continuing_s: float = 1.2  # ...or right after "and", a comma, etc.
     heard_after_s: float = 0.5   # once this much of a reply has played, the caller has heard it
