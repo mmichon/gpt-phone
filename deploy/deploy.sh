@@ -49,14 +49,14 @@ pactl set-default-sink phone_aec_sink || true
 pactl set-default-source phone_aec_source || true
 # Fixed mic gain, and the adapter's own auto gain off: gain that keeps changing
 # under the echo canceller breaks it, and it then chops up the caller's words.
-# Maxed out (+23 dB, with auto gain) speech peaked near -5 dBFS; aim for ~-15.
-card=$(awk '/C-Media/ {print $1; exit}' /proc/asound/cards)
+# Maxed out (+23 dB, with auto gain) speech peaked near -5 dBFS; aim for ~-15 (70% here is +13 dB).
+# (PipeWire drives the Mic control from the source's volume, so set it there.)
+card=$(awk '/C-Media/ {print prev; exit} {prev=$1}' /proc/asound/cards)
 if [[ -n $card ]]; then
   amixer -q -c "$card" sset 'Auto Gain Control' off || true
-  amixer -q -c "$card" sset Mic capture 26 cap || true
   sudo alsactl store "$card" 2>/dev/null || true
 fi
-pactl set-source-volume alsa_input.usb-C-Media_Electronics_Inc._USB_Audio_Device-00.mono-fallback 100% || true
+pactl set-source-volume alsa_input.usb-C-Media_Electronics_Inc._USB_Audio_Device-00.mono-fallback 70% || true
 pactl set-source-volume phone_aec_source 100% || true
 systemctl --user daemon-reload
 # Wi-Fi power saving on the Pi causes dropouts and latency spikes. The drop-in
