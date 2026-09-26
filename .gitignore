@@ -2,7 +2,7 @@ gpt-phone.code-workspace
 start-phone.sh
 
 # Private persona definitions (personal details) -- never commit
-roles.py
+/roles.py
 roles.yaml
 
 # Secrets
