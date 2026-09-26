@@ -1,2 +1,16 @@
 gpt-phone.code-workspace
 start-phone.sh
+
+# Private persona definitions (personal details) -- never commit
+roles.py
+roles.yaml
+
+# Secrets
+.env
+deploy/env
+
+# Local artifacts
+__pycache__/
+.venv/
+.pytest_cache/
+tests/e2e/reports/
