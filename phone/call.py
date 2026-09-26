@@ -27,6 +27,7 @@ class Speaker:
         self._stream = None
         self._pending = None
         self._pumps = set()
+        self.hold_until = None  # the current reply mustn't play before this (see brain.Reply)
 
     @property
     def busy(self):
@@ -43,7 +44,7 @@ class Speaker:
             return
         if self._stream is None:
             self._stream = await self._take_stream()
-            pump = asyncio.create_task(self._pump(self._stream))
+            pump = asyncio.create_task(self._pump(self._stream, self.hold_until))
             self._pumps.add(pump)
             pump.add_done_callback(self._pumps.discard)
         await self._stream.send(phrase)
@@ -76,12 +77,15 @@ class Speaker:
                 log.debug("Pre-opened TTS stream failed: %s", e)
         return await self.tts.open(*self.voice)
 
-    async def _pump(self, stream):
+    async def _pump(self, stream, hold_until=None):
         first = True
         try:
             async for pcm in stream.audio():
-                if first and self.on_first_audio:
-                    self.on_first_audio(time.monotonic())
+                if first:
+                    if self.on_first_audio:
+                        self.on_first_audio(time.monotonic())
+                    if hold_until and (wait := hold_until - time.monotonic()) > 0:
+                        await asyncio.sleep(wait)  # audio keeps arriving meanwhile; none is lost
                 first = False
                 self.player.write(pcm)
         finally:
@@ -167,9 +171,10 @@ class Call:
                     self._last_activity = self._heard_at = now
                     log.info("Caller: %s", text.strip())
                     self.observe("heard", text=text)
-                case Reply(text=text):
+                case Reply(text=text, hold_until=hold_until):
                     if not self._replying:
                         self._start_reply(now)
+                        self.speaker.hold_until = hold_until
                     self.observe("reply", text=text)
                     for phrase in chunker.feed(text):
                         await self.speaker.say(phrase)

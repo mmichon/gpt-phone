@@ -85,9 +85,10 @@ class Rig:
     async def say(self, *parts):
         """The caller speaks: line names, with numbers as pauses in seconds. Returns (start, end)."""
         pcm = b""
+        exact = any(isinstance(p, (int, float)) for p in parts)  # explicit pauses: make them exact
         for part in parts:
             pcm += (b"\x00\x00" * int(part * self.cfg.mic_rate) if isinstance(part, (int, float))
-                    else load_line(part, self.cfg.mic_rate))
+                    else load_line(part, self.cfg.mic_rate, trim=exact))
         self.mic.say(pcm, "+".join(p for p in parts if isinstance(p, str)))
         await asyncio.sleep(len(pcm) / 2 / self.cfg.mic_rate)
         while self.mic.talking or self.mic.spans[-1][1] is None:

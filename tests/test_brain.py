@@ -3,6 +3,7 @@
 import asyncio
 import dataclasses
 
+import pytest
 from google.genai import types
 
 from phone.brain import GeminiBrain
@@ -216,3 +217,17 @@ async def test_a_new_stretch_waits_for_the_previous_transcript():
     await tick()
     assert brain.session.sent[3:] == ["activity_start", "audio"]
     brain._sender.cancel()
+
+
+async def test_replies_to_statements_are_held_and_to_questions_are_not():
+    brain = ScriptedBrain(statement_hold_s=0.9)
+    brain.say("So I was at the station.")
+    await tick()
+    assert brain._exchange.hold_until is not None
+    assert brain._exchange.hold_until - brain._speech_ended_at == pytest.approx(0.9)
+    brain.mark_heard()
+    brain.reply("Oh? ", None)
+    await tick()
+    brain.say("What was it doing there?")
+    await tick()
+    assert brain._exchange.hold_until is None

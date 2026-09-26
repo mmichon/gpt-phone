@@ -12,7 +12,10 @@ opened back to back sometimes lost a whole sentence.
 Deciding the caller is done: when they stop after a finished sentence, the
 reply starts at once, from the interim transcript if it's complete (the final
 one, ~0.3 s later, replaces it if the words differ). A pause mid-sentence gets
-a grace period, longer after "and" or a comma.
+a grace period, longer after "and" or a comma. A reply to a question plays as
+soon as it's ready; a reply to a statement is held until the caller has been
+quiet a little longer (Reply.hold_until), because storytellers pause after
+full stops too.
 
 Yielding: if the caller carries on before they've heard much of the reply
 (mark_heard() says when they have), the reply is withdrawn and everything they
@@ -71,6 +74,7 @@ class Heard:
 @dataclass
 class Reply:
     text: str
+    hold_until: float = None   # don't play this reply before this monotonic time
 
 
 @dataclass
@@ -111,6 +115,7 @@ class _Exchange:
     heard: bool = False          # has the caller heard enough of the reply for it to count?
     done: bool = False
     user_index: int = 0          # where the caller's turn sits in the history
+    hold_until: float = None     # see Reply.hold_until
 
     @property
     def asked(self):
@@ -135,6 +140,7 @@ class GeminiBrain:
         self._exchange = None
         self._turn_timer = None
         self._caller_talking = False
+        self._speech_ended_at = 0.0
         self._background = set()
         self._outbox = asyncio.Queue()   # messages for Gemini, sent in order by _sender
         self._final_due = asyncio.Event()  # clear while a stretch's final transcript is awaited
@@ -304,6 +310,7 @@ class GeminiBrain:
     def speech_ended(self):
         log.debug("Speech ended; interim transcript so far: %r", self._interim)
         self._caller_talking = False
+        self._speech_ended_at = time.monotonic()
         self._emit(SpeechEnded())
         self._schedule_turn()
 
@@ -376,6 +383,8 @@ class GeminiBrain:
         else:
             exchange = _Exchange(base=self._pending, segment="", segment_final=True)
         self._pending = ""
+        if not exchange.asked.rstrip("\"') ").endswith("?"):
+            exchange.hold_until = self._speech_ended_at + self.cfg.statement_hold_s
         log.debug("Answering from the %s transcript: %s", "interim" if speculative else "final", exchange.asked)
         exchange.user_index = len(self.history)
         self.history.append(_turn("user", exchange.asked))
@@ -386,7 +395,7 @@ class GeminiBrain:
         try:
             async for piece in self.stream_reply(self.history[:exchange.user_index + 1]):
                 exchange.said += piece
-                self._emit(Reply(piece))
+                self._emit(Reply(piece, exchange.hold_until))
             exchange.done = True
             self.history.append(_turn("model", exchange.said))
             self._emit(ReplyDone())

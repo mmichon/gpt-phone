@@ -53,6 +53,8 @@ class Config:
     turn_grace_s: float = 0.8    # extra wait when a pause comes mid-sentence
     turn_grace_continuing_s: float = 1.2  # ...or right after "and", a comma, etc.
     heard_after_s: float = 0.5   # once this much of a reply has played, the caller has heard it
+    statement_hold_s: float = 0.9  # a reply to a statement (not a question) plays no sooner than this
+                                   # after speech ends, in case the caller is pausing mid-story
     still_there_s: float = 20.0  # caller silence before "are you still there?"
     give_up_s: float = 120.0     # caller silence before the call is dropped
 

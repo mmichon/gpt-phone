@@ -27,10 +27,18 @@ from phone.hardware import DialStart, Digit, OffHook, OnHook
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "caller"
 
 
-def load_line(name, rate=16000):
+def load_line(name, rate=16000, trim=False):
+    """A caller line. With trim, the recording's own leading and trailing silence
+    is cut (keeping 50 ms), so pauses placed between lines are exact."""
     with wave.open(str(FIXTURES / f"{name}.wav")) as w:
         assert w.getframerate() == rate and w.getnchannels() == 1 and w.getsampwidth() == 2
-        return w.readframes(w.getnframes())
+        pcm = w.readframes(w.getnframes())
+    if trim:
+        samples = np.frombuffer(pcm, dtype=np.int16)
+        loud = np.flatnonzero(np.abs(samples) > 500)
+        margin = rate // 20
+        pcm = samples[max(0, loud[0] - margin):loud[-1] + margin].tobytes()
+    return pcm
 
 
 class ScriptedHardware:

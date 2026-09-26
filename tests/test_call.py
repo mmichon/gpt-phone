@@ -223,3 +223,17 @@ async def test_a_retracted_reply_is_silenced(setup):
     assert player.flushes > flushes and tts.streams[0].closed
     assert ("retracted", {}) in observed
     task.cancel()
+
+
+async def test_a_held_reply_does_not_play_early(setup):
+    import time
+    make, brains, tts, player, _ = setup
+    task = await start(make())
+    hold = time.monotonic() + 0.15
+    brains[0].script.put_nowait(Reply("Go on. ", hold_until=hold))
+    brains[0].script.put_nowait(ReplyDone())
+    await asyncio.sleep(0.05)
+    assert b"Go on." not in player.played, "held: shouldn't play yet"
+    await asyncio.sleep(0.2)
+    assert b"Go on." in player.played
+    task.cancel()
