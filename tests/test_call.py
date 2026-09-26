@@ -31,6 +31,9 @@ class FakeBrain:
     async def send_audio(self, pcm):
         self.sent.append(pcm)
 
+    def mark_heard(self):
+        self.heard = True
+
     async def events(self):
         while True:
             event = await self.script.get()
@@ -189,3 +192,34 @@ async def test_silent_caller_is_prompted_then_dropped(setup):
     cfg = Config(None, None, still_there_s=1, give_up_s=2.5)
     await asyncio.wait_for(make(cfg=cfg).run(), timeout=5)
     assert b"Hello? Are you still there?" in player.played
+
+
+async def test_a_reply_counts_as_heard_once_enough_has_played(setup):
+    make, brains, tts, player, _ = setup
+    import dataclasses
+    task = await start(make(cfg=dataclasses.replace(Config(None, None, still_there_s=3600, give_up_s=3600),
+                                                    heard_after_s=0.05)))
+    brain = brains[0]
+    brain.heard = False
+    brain.script.put_nowait(SpeechEnded())
+    brain.script.put_nowait(Reply("Hello there. "))
+    await asyncio.sleep(0.02)
+    player.on_start(asyncio.get_running_loop().time())
+    assert not brain.heard
+    await asyncio.sleep(0.08)
+    assert brain.heard
+    task.cancel()
+
+
+async def test_a_retracted_reply_is_silenced(setup):
+    from phone.brain import Retracted
+    make, brains, tts, player, observed = setup
+    task = await start(make())
+    brains[0].script.put_nowait(Reply("Oh, the station! "))
+    await asyncio.sleep(0.02)
+    flushes = player.flushes
+    brains[0].script.put_nowait(Retracted())
+    await asyncio.sleep(0.02)
+    assert player.flushes > flushes and tts.streams[0].closed
+    assert ("retracted", {}) in observed
+    task.cancel()

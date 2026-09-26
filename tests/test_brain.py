@@ -1,56 +1,191 @@
-"""How Gemini Live server messages become call events."""
+"""Turn-taking in the brain: when the caller is done, and what happens if they carry on."""
+
+import asyncio
+import dataclasses
 
 from google.genai import types
 
-from phone.brain import GeminiLiveBrain, Heard, Interrupted, Reply, ReplyDone, SpeechEnded, SpeechStarted
+from phone.brain import GeminiBrain
 from phone.config import Config
 
 from .fakes import directory
 
 
-def brain():
-    return GeminiLiveBrain(Config(gemini_api_key="test", elevenlabs_api_key=None), directory().roles[1])
+class ScriptedBrain(GeminiBrain):
+    """A brain whose replies are released piece by piece by the test."""
+
+    def __init__(self, role_digit=1, **cfg):
+        config = dataclasses.replace(Config(gemini_api_key="test", elevenlabs_api_key=None),
+                                     turn_grace_s=0.3, turn_grace_continuing_s=0.6, **cfg)
+        super().__init__(config, directory().roles[role_digit])
+        self.pieces = asyncio.Queue()
+        self.asked = []
+
+    async def stream_reply(self, history):
+        self.asked.append(history[-1].parts[0].text)
+        while (piece := await self.pieces.get()) is not None:
+            yield piece
+
+    def interim(self, text):
+        self.handle(types.LiveServerMessage(server_content=types.LiveServerContent(
+            interim_input_transcription=types.Transcription(text=text))))
+
+    def final(self, text):
+        self.handle(types.LiveServerMessage(server_content=types.LiveServerContent(
+            input_transcription=types.Transcription(text=text))))
+
+    def say(self, text, interim=None, final=True):
+        """A stretch of speech: start, interim transcript, end, then (as in reality) the final one."""
+        self.speech_started()
+        if interim:
+            self.interim(interim)
+        self.speech_ended()
+        if final:
+            self.final(text)
+
+    def reply(self, *pieces):
+        for piece in pieces:
+            self.pieces.put_nowait(piece)
+
+    def drain(self):
+        events = []
+        while not self._events.empty():
+            events.append(type(self._events.get_nowait()).__name__)
+        return events
+
+    def texts(self):
+        return [(c.role, c.parts[0].text) for c in self.history]
 
 
-def events(b, **server_content):
-    message = types.LiveServerMessage(server_content=types.LiveServerContent(**server_content))
-    return [type(e).__name__ if not hasattr(e, "text") else (type(e).__name__, e.text) for e in b._translate(message)]
+async def tick(seconds=0.01):
+    await asyncio.sleep(seconds)
 
 
-def activity(b, kind):
-    message = types.LiveServerMessage(voice_activity=types.VoiceActivity(voice_activity_type=kind))
-    return [type(e).__name__ for e in b._translate(message)]
+async def test_a_finished_sentence_is_answered_at_once():
+    brain = ScriptedBrain()
+    brain.say("Where do you live?")
+    await tick()
+    assert brain.asked == ["Where do you live?"]
+    brain.reply("Up in the hills. ", None)
+    await tick()
+    assert brain.drain() == ["SpeechStarted", "SpeechEnded", "Heard", "Reply", "ReplyDone"]
+    assert brain.texts() == [("user", "Where do you live?"), ("model", "Up in the hills. ")]
 
 
-def test_reply_text_comes_from_the_output_transcription_not_the_audio():
-    b = brain()
-    audio = types.Content(parts=[types.Part(inline_data=types.Blob(data=b"\0\0", mime_type="audio/pcm"))])
-    assert events(b, model_turn=audio, output_transcription=types.Transcription(text="Hello there ")) == \
-        [("Reply", "Hello there ")]
-    assert events(b, turn_complete=True) == ["ReplyDone"]
+async def test_a_complete_interim_transcript_starts_the_reply_before_the_final_one():
+    brain = ScriptedBrain()
+    brain.say("Where do you live?", interim="Where do you live?", final=False)
+    await tick()
+    assert brain.asked == ["Where do you live?"]
+    brain.final("Where do you live?")
+    await tick()
+    assert brain.asked == ["Where do you live?"], "same words: no need to start over"
 
 
-def test_interrupted_turn_is_not_reported_done():
-    assert events(brain(), interrupted=True, turn_complete=True) == ["Interrupted"]
+async def test_a_final_transcript_that_differs_restarts_the_reply():
+    brain = ScriptedBrain()
+    brain.say("", interim="Where do you leave?", final=False)
+    await tick()
+    brain.final("Where do you live?")
+    await tick()
+    assert brain.asked == ["Where do you leave?", "Where do you live?"]
+    assert brain.texts() == [("user", "Where do you live?")]
 
 
-def test_server_voice_activity_marks_speech():
-    b = brain()
-    assert activity(b, types.VoiceActivityType.ACTIVITY_START) == ["SpeechStarted"]
-    assert events(b, input_transcription=types.Transcription(text="hi")) == [("Heard", "hi")]
-    assert activity(b, types.VoiceActivityType.ACTIVITY_END) == ["SpeechEnded"]
+async def test_an_unfinished_interim_waits_for_the_final_transcript():
+    brain = ScriptedBrain()
+    brain.say("", interim="Where do you", final=False)
+    await tick()
+    assert brain.asked == []
+    brain.final("Where do you live?")
+    await tick()
+    assert brain.asked == ["Where do you live?"]
 
 
-def test_without_server_voice_activity_first_words_mark_speech_start():
-    b = brain()
-    assert events(b, interim_input_transcription=types.Transcription(text="wa")) == ["SpeechStarted"]
-    assert events(b, input_transcription=types.Transcription(text="wait")) == [("Heard", "wait")]
-    events(b, output_transcription=types.Transcription(text="Yes? "))
-    assert events(b, input_transcription=types.Transcription(text="again")) == ["SpeechStarted", ("Heard", "again")]
+async def test_a_pause_mid_sentence_waits_for_the_rest():
+    brain = ScriptedBrain()
+    brain.say("So I was walking down by the old train station")
+    await tick(0.15)
+    assert brain.asked == [], "shouldn't answer during a mid-sentence pause"
+    brain.say("and I saw a dog in a hat. What was it doing?")
+    await tick()
+    assert brain.asked == ["So I was walking down by the old train station and I saw a dog in a hat. What was it doing?"]
 
 
-def test_config_asks_for_audio_with_transcripts_both_ways():
-    config = brain()._config()
-    assert config.response_modalities == [types.Modality.AUDIO]
-    assert config.input_audio_transcription is not None
-    assert config.output_audio_transcription is not None
+async def test_a_long_pause_mid_sentence_is_eventually_answered():
+    brain = ScriptedBrain()
+    brain.say("I was wondering whether it")
+    await tick(0.4)
+    assert brain.asked == ["I was wondering whether it"]
+
+
+async def test_a_trailing_and_or_comma_waits_longer():
+    brain = ScriptedBrain()
+    brain.say("I went to the store and")
+    await tick(0.4)
+    assert brain.asked == []
+    await tick(0.3)
+    assert brain.asked == ["I went to the store and"]
+
+
+async def test_carrying_on_before_hearing_the_reply_withdraws_it():
+    """The transcriber put a period at a thinking pause; the caller goes on before hearing the answer."""
+    brain = ScriptedBrain()
+    brain.say("So the other day I was at the station.")
+    await tick()
+    brain.reply("Oh, the station! ")  # reply text is streaming, but hasn't been heard yet
+    await tick()
+    brain.say("And I saw a dog in a hat. Why?")
+    await tick()
+    assert "Retracted" in brain.drain()
+    assert brain.asked[-1] == "So the other day I was at the station. And I saw a dog in a hat. Why?"
+    assert brain.texts() == [("user", "So the other day I was at the station. And I saw a dog in a hat. Why?")]
+
+
+async def test_a_finished_but_unheard_reply_is_withdrawn_too():
+    brain = ScriptedBrain()
+    brain.say("Hi.")
+    await tick()
+    brain.reply("Hello there! ", None)
+    await tick()
+    brain.say("It's Sam. Who's this?")
+    await tick()
+    assert brain.asked[-1] == "Hi. It's Sam. Who's this?"
+    assert brain.texts() == [("user", "Hi. It's Sam. Who's this?")]
+
+
+async def test_talking_over_a_heard_reply_interrupts_it():
+    brain = ScriptedBrain()
+    brain.say("Tell me a story.")
+    await tick()
+    brain.reply("Once upon a time, ")
+    await tick()
+    brain.mark_heard()
+    brain.say("Wait, stop!")
+    await tick()
+    events = brain.drain()
+    assert "Interrupted" in events and "ReplyDone" not in events
+    assert brain.texts() == [("user", "Tell me a story."), ("model", "Once upon a time, —"),
+                             ("user", "Wait, stop!")]
+
+
+async def test_a_heard_and_finished_reply_stays_when_the_caller_goes_on():
+    brain = ScriptedBrain()
+    brain.say("Hi.")
+    await tick()
+    brain.reply("Hello there! ", None)
+    await tick()
+    brain.mark_heard()
+    brain.say("How are you?")
+    await tick()
+    assert brain.texts() == [("user", "Hi."), ("model", "Hello there! "), ("user", "How are you?")]
+
+
+def test_listening_is_text_only_with_local_voice_detection():
+    config = ScriptedBrain(role_digit=7)._listen_config()
+    assert config.response_modalities == [types.Modality.TEXT]
+    assert config.realtime_input_config.automatic_activity_detection.disabled
+    assert config.input_audio_transcription.language_codes == ["en-US"]
+    polish = dataclasses.replace(directory().roles[7], language="pl")
+    brain = GeminiBrain(Config(gemini_api_key="test", elevenlabs_api_key=None), polish)
+    assert brain._listen_config().input_audio_transcription.language_codes == ["pl-PL"]

@@ -10,7 +10,7 @@ import logging
 import time
 
 from . import audio
-from .brain import BrainError, GeminiLiveBrain, Heard, Interrupted, Reply, ReplyDone, SpeechEnded, SpeechStarted
+from .brain import GeminiBrain, Heard, Interrupted, Reply, ReplyDone, Retracted, SpeechEnded, SpeechStarted
 from .tts import PhraseChunker, speakable
 
 log = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ class Speaker:
 
 
 class Call:
-    def __init__(self, cfg, role, deps, observe=None, brain_factory=GeminiLiveBrain):
+    def __init__(self, cfg, role, deps, observe=None, brain_factory=GeminiBrain):
         self.cfg = cfg
         self.role = role
         self.mic = deps.mic
@@ -105,6 +105,7 @@ class Call:
         self._replying = False
         self._speech_end = None
         self._heard_at = None
+        self._heard_timer = None
         self._last_activity = time.monotonic()
         self._mute_until = 0.0
 
@@ -182,9 +183,17 @@ class Call:
                     self._replying = False
                     self.observe("interrupted")
                     await self._interrupt(chunker)
+                case Retracted():
+                    # The caller carried on before hearing it; the brain will answer it all together.
+                    self._replying = False
+                    self.observe("retracted")
+                    await self._interrupt(chunker)
 
     async def _interrupt(self, chunker):
         chunker.finish()
+        if self._heard_timer:
+            self._heard_timer.cancel()
+            self._heard_timer = None
         await self.speaker.cancel()
         self.observe("output_stopped")
 
@@ -201,6 +210,9 @@ class Call:
 
     def _on_play_start(self, t):
         self.observe("play_start")
+        if "text" in self._marks and "play" not in self._marks:
+            # Once enough of the reply has played, the caller has heard it: talking now interrupts it.
+            self._heard_timer = asyncio.get_running_loop().call_later(self.cfg.heard_after_s, self.brain.mark_heard)
         marks = self._marks
         if "text" in marks and "play" not in marks:
             marks["play"] = t

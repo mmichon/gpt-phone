@@ -1,6 +1,6 @@
 """Spike: does gemini-3.8-live work in text mode, and how fast does it answer?
 
-Streams caller WAVs into a real GeminiLiveBrain at real-time pace and prints a
+Streams caller WAVs into a real GeminiBrain at real-time pace and prints a
 timeline: when the caller's audio ended, when the server detected end of
 speech, and when the first reply text arrived.
 
@@ -12,7 +12,7 @@ import sys
 import time
 
 sys.path.insert(0, ".")
-from phone.brain import GeminiLiveBrain, Heard, Interrupted, Reply, ReplyDone, SpeechEnded, SpeechStarted
+from phone.brain import GeminiBrain, Heard, Interrupted, Reply, ReplyDone, SpeechEnded, SpeechStarted
 from phone.config import Config
 from phone.roles import Role
 from tests.e2e.harness import load_line
@@ -24,10 +24,10 @@ LINES = {"long": ["long_1", 1.2, "long_2", 1.2, "long_3"]}
 
 async def main(names):
     cfg = Config.from_env()
-    brain = GeminiLiveBrain(cfg, ROLE)
+    brain = GeminiBrain(cfg, ROLE)
     t0 = time.monotonic()
     await brain.connect()
-    print(f"connected in {(time.monotonic() - t0) * 1000:.0f} ms (model {cfg.live_model})")
+    print(f"connected in {(time.monotonic() - t0) * 1000:.0f} ms ({cfg.listen_model} + {cfg.text_model})")
     stamp = lambda: f"{(time.monotonic() - t0):7.2f}s"
     ended = {}
 

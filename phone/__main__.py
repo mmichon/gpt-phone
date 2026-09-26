@@ -82,7 +82,8 @@ async def check_services(cfg, status):
         try:
             from google import genai
             client = genai.Client(api_key=cfg.gemini_api_key)
-            await asyncio.wait_for(client.aio.models.get(model=cfg.live_model), 10)
+            for model in (cfg.listen_model, cfg.text_model):
+                await asyncio.wait_for(client.aio.models.get(model=model), 10)
             status.problem("gemini")
         except Exception as e:
             ok = False
