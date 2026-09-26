@@ -1,0 +1,15 @@
+[project]
+name = "gpt-phone"
+version = "2.0.0"
+description = "A rotary telephone that connects callers to AI characters"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-m 'not e2e and not system'"
+markers = [
+    "e2e: end-to-end calls on the Pi against real APIs and audio hardware",
+    "system: resilience tests against the deployed service, run from a dev machine over SSH",
+]

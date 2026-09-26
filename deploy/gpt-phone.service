@@ -1,0 +1,28 @@
+# systemd *user* unit (runs as pi, alongside the user's PipeWire session).
+# Installed to ~/.config/systemd/user/ by deploy/deploy.sh. Needs `loginctl enable-linger pi`
+# so the user session, and PipeWire with it, starts at boot without a login.
+
+[Unit]
+Description=GPT Phone: rotary phone AI characters
+Wants=pipewire.service pipewire-pulse.service wireplumber.service
+After=pipewire.service pipewire-pulse.service wireplumber.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+WorkingDirectory=%h/phone
+EnvironmentFile=%h/.config/gpt-phone/env
+Environment=PYTHONUNBUFFERED=1
+Environment=PHONE_ROLES_FILE=%h/.config/gpt-phone/roles.yaml
+# Route audio through the echo canceller (see 60-echo-cancel.conf); harmless if it's absent.
+ExecStartPre=-/usr/bin/pactl set-default-sink phone_aec_sink
+ExecStartPre=-/usr/bin/pactl set-default-source phone_aec_source
+ExecStart=%h/phone/.venv/bin/python -m phone
+Restart=always
+RestartSec=3
+WatchdogSec=30
+TimeoutStartSec=60
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,17 @@
+# The synthetic caller's lines for the end-to-end tests.
+# Rendered to <name>.wav (16 kHz mono) by tests/fixtures/make_caller_audio.py.
+voice: Charon
+lines:
+  hello: Hi there! My name is Sam. Who am I talking to?
+  polish_hello: {text: "Cześć! Mam na imię Sam. Jak się dzisiaj masz?", language: pl}
+  long_1: So the other day I was walking down by the old train station,
+  long_2: and I saw this really strange dog wearing a little red hat,
+  long_3: and I've been wondering ever since, what do you think it was doing there?
+  story_request: Tell me a long story about the most exciting day of your life. Take your time, I want all the details.
+  interrupt: Wait, wait, hold on. Can you say that last part again?
+  cough: {text: "<cough> <cough> <breath>", style: "one person coughing twice and then breathing, with no words"}
+  q1: What's your favorite color?
+  q2: Where do you live?
+  q3: Do you like music?
+  q4: What did you have for breakfast today?
+  q5: How old are you?

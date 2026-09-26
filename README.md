@@ -1,66 +1,109 @@
 # GPT Phone
 
-GPT Phone is a Python-based project that simulates a phone call with various characters using OpenAI's GPT-3.5 and ElevenLabs for text-to-speech. The project is designed to run on a Raspberry Pi with a physical phone interface. It also interfaces via GPIO pins to a Bell 304 series telephone's hardware including the rotary dial switch, hook switch, handset speaker, and handset microphone.
+A Bell 304-series rotary telephone that connects callers to AI characters. Pick up
+the handset and an operator asks you to dial. Dial 0 for the directory, or dial a
+digit and a character answers: an elf, a prospector, the Devil, and so on.
 
-## Installation
+It runs on a Raspberry Pi 4 wired to the phone's hook switch and rotary dial, with a
+USB audio adapter driving the handset's earpiece and mouthpiece.
 
-1. Create a virtual environment:
-    ```sh
-    python3 -m venv gpt-phone
-    source gpt-phone/bin/activate
-    ```
+## How it works
 
-2. Install system dependencies:
-    ```sh
-    sudo apt install portaudio19-dev pipewire-audio-client-libraries
-    ```
+```
+hook/dial (GPIO) ─► switchboard: idle → operator → dial → call → idle
+                                                     │
+ mouthpiece ─► echo canceller ─► Gemini Live ──text──► ElevenLabs ──audio──► earpiece
+ (16 kHz, streamed continuously)  (hears, decides     (streaming TTS,
+                                   when you're done,   the character's
+                                   thinks, replies)    voice)
+```
 
-3. Install Python dependencies:
-    ```sh
-    pip3 install -r requirements.txt
-    ```
+- **Listening and thinking**: one [Gemini Live](https://ai.google.dev/gemini-api/docs/live) session per call.
+  Server-side voice activity detection decides when the caller has finished (no more
+  cutting people off mid-sentence), and callers can interrupt the character.
+- **Voice**: [ElevenLabs](https://elevenlabs.io) WebSocket streaming. Each phrase is
+  spoken as soon as it's written, so the character starts talking before it has
+  finished thinking.
+- **Operator prompts and greetings** are rendered once and cached on disk, so they play
+  instantly and even without a network. If everything fails, callers hear a busy
+  signal, never silence.
+- **Echo cancellation**: PipeWire's WebRTC echo canceller (which also removes line
+  hiss) sits between the app and the USB audio device.
+- **Reliability**: a systemd user service with a watchdog; it restarts on crashes,
+  hangs and lost audio devices, and starts cleanly at boot even before Wi-Fi is up.
+
+Code lives in `phone/`: `switchboard.py` (state machine), `call.py` (the concurrent
+call pipeline), `brain.py` (Gemini Live), `tts.py` (ElevenLabs and the prompt cache),
+`audio.py` (mic/speaker streams), `hardware.py` (hook and dial), `roles.py`.
 
 ## Hardware
 
-1. Connect the hook switch to GPIO14 (or change the pin definition in `gpt-phone.py`) and ground
-2. Connect the rotary dial switch to GPIO15 (or change the pin definition in `gpt-phone.py`) and ground
-3. Connect your audio device's microphone to the phone's microphone circuit
-4. Connect your audio device's speaker to the phone's speaker circuit
+1. Hook switch between GPIO14 and 3.3 V (internal pull-down; high = off hook).
+2. Rotary dial pulse contacts between GPIO15 and 3.3 V.
+3. USB audio adapter: mic input to the handset mouthpiece, output to the earpiece.
 
-## Configuration
+Pins are set in `phone/config.py`.
 
-- **Personality**: Personalize the system roles, greetings, etc in [roles.py](http://_vscodecontentref_/0) file.
-- **Voices**: Set the voice IDs for ElevenLabs in [roles.py](http://_vscodecontentref_/1) array.
-- **Dialtone Files**: Optionally, change the dialtone files in [roles.py](http://_vscodecontentref_/2) array.
-- **
+## Setup
 
-## Usage
+You need a [Gemini API key](https://aistudio.google.com/apikey) and a **paid**
+ElevenLabs plan (the free tier refuses Voice Library voices over the API).
 
-1. Set the environment variables `OPENAI_API_KEY` and `ELEVENLABS_KEY`:
-    ```sh
-    export OPENAI_API_KEY="your_openai_api_key"
-    export ELEVENLABS_KEY="your_elevenlabs_api_key"
-    export TEST_DIGIT=1 # Optional. Forces a particular role to answer the phone, for testing purposes.
-    ```
+1. Characters: copy `roles.example.yaml` to `roles.yaml` and edit it. Each role has a
+   name (read out in the directory), an ElevenLabs `voice_id`, a greeting and a
+   persona, plus optional `ringback` (a file in `sounds/`), `language` and
+   `still_there`. `roles.yaml` is gitignored because personas tend to be personal.
+2. Keys, on the Pi, in `~/.config/gpt-phone/env` (`chmod 600`); see `deploy/env.example`:
+   ```sh
+   GEMINI_API_KEY=...
+   ELEVENLABS_API_KEY=...
+   ```
+3. Deploy from your computer (needs SSH access to `pi@phone.local`; set `PHONE_HOST` to override):
+   ```sh
+   deploy/deploy.sh             # sync, install deps, unit and echo-cancel config, restart
+   deploy/deploy.sh --cutover   # first time only: retire the legacy phone.service
+   ```
+   The Pi needs `sudo apt install ffmpeg libportaudio2 python3-gpiozero python3-lgpio`
+   and `loginctl enable-linger pi`, so the user session (and PipeWire) starts at boot.
 
-2. Run the script:
-    ```sh
-    python3 gpt-phone.py
-    ```
+`deploy/rollback-legacy.sh` restores the pre-2.0 version (tagged `legacy-v1`).
 
-## Systemd Service
+## Development
 
-To run the GPT Phone as a systemd service, create a service file and enable it:
+```sh
+uv venv --python 3.11 .venv && uv pip install -r requirements.txt -r requirements-dev.txt
+cp deploy/env.example .env       # add keys
+.venv/bin/python -m phone --no-gpio --role 1   # talk to role 1 with your Mac's mic/speakers
+```
 
-1. Enable and start the service:
-    ```sh
-    sudo cp phone.service /etc/systemd/systemd
-    sudo systemctl --reload-daemon
-    sudo systemctl enable phone.service
-    sudo systemctl start phone.service
-    loginctl enable-linger # this allows pulseaudio/pipewire to load upon boot
-    ```
+With `--no-gpio`, Enter lifts or hangs up the handset and typing a digit then Enter
+dials it. Use headphones, or the character will hear itself.
+
+## Tests
+
+```sh
+.venv/bin/python -m pytest                 # unit tests (fast, no network)
+deploy/deploy.sh --test                    # end-to-end calls on the phone; report in tests/e2e/reports/
+.venv/bin/python -m pytest -m system tests/system   # resilience: kill, watchdog, no network, USB loss, reboots
+```
+
+The end-to-end suite runs real calls through the real handset (quietly), with a
+synthetic caller mixed into the real microphone. It checks every role answers, long
+pauses don't cut the caller off, silence isn't heard as speech, barge-in and hang-up
+stop audio immediately, and median latency stays under 1.5 s. The caller's lines are
+generated by `tests/fixtures/make_caller_audio.py`.
+
+To test the physical dial: `python -m phone --dial-test --expect 1234567890 --record tests/fixtures/dial/run.json`,
+then dial those digits. Recordings become regression tests for the pulse decoder.
+
+## Troubleshooting
+
+```sh
+ssh pi@phone.local
+systemctl --user status gpt-phone          # the Status line says what it's doing, and what's degraded
+journalctl --user -u gpt-phone -f          # logs, including per-turn latency
+```
 
 ## License
 
-This project is licensed under the MIT License.
+MIT

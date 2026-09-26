@@ -14,3 +14,4 @@ __pycache__/
 .venv/
 .pytest_cache/
 tests/e2e/reports/
+.lgd-nfy*
