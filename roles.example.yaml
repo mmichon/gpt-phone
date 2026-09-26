@@ -1,6 +1,7 @@
 # Example roles. Copy to roles.yaml and edit. roles.yaml is gitignored.
 # Each role: name (spoken in the directory), voice_id (ElevenLabs), greeting,
-# persona, and optionally ringback (file in sounds/), language, still_there, tts_model.
+# persona, and optionally ringback (file in sounds/), language, still_there, tts_model,
+# and paused: true (left out of the directory; dialing it gets the busy message).
 
 operator:
   voice_id: qHR09fcvu6SoDtFzqFvm

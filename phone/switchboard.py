@@ -115,6 +115,9 @@ class Switchboard:
             op = self.directory.operator
             await self.player.play(await self.cache.get(op.voice_id, op.tts_model, op.wrong_number))
             return await self._reorder()
+        if role.paused:
+            log.info("Dialed %d: %s, which is paused", digit, role.name)
+            return await self._busy()
         log.info("Dialed %d: %s", digit, role.name)
         self._set_status(f"in call: {role.name}")
         await self.call_factory(self.cfg, role, self.deps, observe=self.observe).run()

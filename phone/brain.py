@@ -5,7 +5,9 @@ the caller starts and stops talking, and exactly that audio (plus a little
 pre-roll) goes to a Gemini Transcribe Live session, which returns interim
 transcripts as they speak and a punctuated final one for each stretch of
 speech. Gemini's own voice detection is off: in testing it ended turns early
-and dropped callers' last words.
+and dropped callers' last words. A new stretch isn't opened with Gemini until
+the previous one's transcript is back (its audio waits in a queue): stretches
+opened back to back sometimes lost a whole sentence.
 
 Deciding the caller is done: when they stop after a finished sentence, the
 reply starts at once, from the interim transcript if it's complete (the final
@@ -46,6 +48,7 @@ from . import vad
 log = logging.getLogger(__name__)
 
 LANGUAGE_CODES = {"en": "en-US", "pl": "pl-PL"}
+FINAL_WAIT_S = 0.8  # longest a new stretch of speech waits for the previous transcript
 SENTENCE_DONE = re.compile(r"[.?!…][\"')\]]*\s*$")
 CONTINUING = re.compile(r"([,;:—–-]|\b(and|but|so|or|because|then|that|like|um+|uh+|if|when|with))\s*$", re.I)
 
@@ -133,6 +136,11 @@ class GeminiBrain:
         self._turn_timer = None
         self._caller_talking = False
         self._background = set()
+        self._outbox = asyncio.Queue()   # messages for Gemini, sent in order by _sender
+        self._final_due = asyncio.Event()  # clear while a stretch's final transcript is awaited
+        self._final_due.set()
+        self._final_timer = None
+        self._sender = None
 
     # Listening
 
@@ -145,14 +153,27 @@ class GeminiBrain:
                 automatic_activity_detection=types.AutomaticActivityDetection(disabled=True)),
         )
 
-    async def connect(self):
+    async def connect(self, attempts=3):
+        """Open the listening session, retrying: a slow or failed connect is usually a blip."""
         self._spawn(self._warm_up())
+        for attempt in range(1, attempts + 1):
+            try:
+                return await self._connect_once()
+            except Exception as e:
+                if attempt == attempts or "API key" in str(e):
+                    raise BrainError(f"Couldn't connect to Gemini: {e}") from e
+                log.warning("Connecting to Gemini failed (%s); retrying", e or type(e).__name__)
+                await asyncio.sleep(0.5 * attempt)
+
+    async def _connect_once(self):
+        if self._sender is None:
+            self._sender = asyncio.create_task(self._send_loop())
         started = time.monotonic()
         context = self.client.aio.live.connect(model=self.cfg.listen_model, config=self._listen_config())
         try:
             session = await asyncio.wait_for(context.__aenter__(), self.cfg.connect_timeout)
         except TimeoutError:
-            raise BrainError(f"Gemini didn't connect within {self.cfg.connect_timeout}s") from None
+            raise TimeoutError(f"no connection within {self.cfg.connect_timeout}s") from None
         old_context, old_receiver = self._context, self._receiver
         self._context, self.session = context, session
         self._receiver = asyncio.create_task(self._receive(session))
@@ -171,7 +192,7 @@ class GeminiBrain:
 
     async def close(self):
         exchange_task = self._exchange.task if self._exchange else None
-        for task in [self._receiver, exchange_task, *self._background]:
+        for task in [self._receiver, self._sender, exchange_task, *self._background]:
             if task:
                 task.cancel()
         self._cancel_turn_timer()
@@ -189,13 +210,30 @@ class GeminiBrain:
         """Feed mic audio. Only speech (as judged locally) is sent to Gemini."""
         for action, data in self.detector.feed(pcm):
             if action == vad.START:
+                log.debug("Speech started")
                 self.speech_started()
-                await self._send(activity_start=types.ActivityStart())
+                self._outbox.put_nowait({"activity_start": types.ActivityStart()})
             elif action == vad.AUDIO:
-                await self._send(audio=types.Blob(data=data, mime_type=f"audio/pcm;rate={self.cfg.mic_rate}"))
+                self._outbox.put_nowait(
+                    {"audio": types.Blob(data=data, mime_type=f"audio/pcm;rate={self.cfg.mic_rate}")})
             elif action == vad.END:
-                await self._send(activity_end=types.ActivityEnd())
+                self._outbox.put_nowait({"activity_end": types.ActivityEnd()})
                 self.speech_ended()
+
+    async def _send_loop(self):
+        try:
+            while True:
+                message = await self._outbox.get()
+                if "activity_start" in message:
+                    await self._final_due.wait()  # the previous stretch's transcript first
+                await self._send(**message)
+                if "activity_end" in message:
+                    self._final_due.clear()
+                    self._final_timer = asyncio.get_running_loop().call_later(FINAL_WAIT_S, self._final_due.set)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._events.put_nowait(e if isinstance(e, BrainError) else BrainError(str(e)))
 
     async def _send(self, **message):
         session = self.session
@@ -257,8 +295,10 @@ class GeminiBrain:
         self._emit(SpeechStarted())
         exchange = self._exchange
         if exchange and not exchange.heard:
+            log.debug("Caller carried on before hearing the reply to %r; withdrawing it", exchange.asked)
             self._retract(exchange)
         elif exchange and not exchange.done:
+            log.debug("Caller talked over the reply to %r", exchange.asked)
             self._interrupt(exchange)
 
     def speech_ended(self):
@@ -269,6 +309,10 @@ class GeminiBrain:
 
     def heard(self, text):
         """A final transcript of the last stretch of speech."""
+        log.debug("Final transcript: %r", text)
+        self._final_due.set()
+        if self._final_timer:
+            self._final_timer.cancel()
         self._segment_open = False
         self._interim = ""
         self._emit(Heard(text))

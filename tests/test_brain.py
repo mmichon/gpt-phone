@@ -189,3 +189,30 @@ def test_listening_is_text_only_with_local_voice_detection():
     polish = dataclasses.replace(directory().roles[7], language="pl")
     brain = GeminiBrain(Config(gemini_api_key="test", elevenlabs_api_key=None), polish)
     assert brain._listen_config().input_audio_transcription.language_codes == ["pl-PL"]
+
+
+class Session:
+    """Records what the brain sends to Gemini."""
+
+    def __init__(self):
+        self.sent = []
+
+    async def send_realtime_input(self, **message):
+        self.sent.append(next(iter(message)))
+
+
+async def test_a_new_stretch_waits_for_the_previous_transcript():
+    brain = ScriptedBrain()
+    brain.session = Session()
+    brain._sender = asyncio.create_task(brain._send_loop())
+    brain._outbox.put_nowait({"activity_start": None})
+    brain._outbox.put_nowait({"audio": None})
+    brain._outbox.put_nowait({"activity_end": None})
+    brain._outbox.put_nowait({"activity_start": None})  # the caller carries on right away
+    brain._outbox.put_nowait({"audio": None})
+    await tick(0.05)
+    assert brain.session.sent == ["activity_start", "audio", "activity_end"], "held until the transcript"
+    brain.final("Hi there.")
+    await tick()
+    assert brain.session.sent[3:] == ["activity_start", "audio"]
+    brain._sender.cancel()

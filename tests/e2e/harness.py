@@ -151,7 +151,14 @@ class Observer:
                 pass
 
     def text(self, kind, after=0.0, before=float("inf")):
-        return "".join(d.get("text", "") for t, d in self.of(kind, after) if t < before)
+        pieces = [d.get("text", "") for t, d in self.of(kind, after) if t < before]
+        # Reply pieces carry their own spacing; transcripts of separate stretches don't.
+        return " ".join(p.strip() for p in pieces) if kind == "heard" else "".join(pieces)
+
+    def reply_that_stood(self, after=0.0):
+        """The reply text since `after`, minus drafts that were withdrawn or cut short."""
+        cutoffs = [t for kind in ("retracted", "interrupted") for t, _ in self.of(kind, after)]
+        return self.text("reply", after=max(cutoffs, default=after))
 
 
 def words(text):

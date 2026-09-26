@@ -26,26 +26,33 @@ HALLUCINATIONS = ["thank you for watching", "thanks for watching", "subscribe", 
 
 def role_digits():
     try:
-        return sorted(load_directory(Config.from_env().roles_file).roles)
+        roles = load_directory(Config.from_env().roles_file).roles
+        return sorted(d for d, r in roles.items() if not r.paused)
     except FileNotFoundError:
         return []
 
 
-def an_english_role(directory):
-    return next(d for d, r in sorted(directory.roles.items()) if r.language == "en")
+def working_english_roles(rig):
+    """English roles whose voice works (their greeting could be rendered)."""
+    return [d for d, r in sorted(rig.directory.roles.items())
+            if r.language == "en" and rig.cache.cached(r.voice_id, r.tts_model, r.greeting)]
+
+
+def an_english_role(rig):
+    return working_english_roles(rig)[0]
 
 
 async def converse(rig, *parts, timeout=30):
     """Say something, wait for the full reply to play. Returns a dict describing the turn."""
     start, end = await rig.say(*parts)
-    done, _ = await rig.obs.wait_for("reply_done", after=start, timeout=timeout)
+    done, _ = await rig.obs.wait_for("reply_done", after=end, timeout=timeout)
     await rig.wait_quiet(after=done)
     first_audio = min(rig.tap.times(end), default=None)
     latency = [d for t, d in rig.obs.of("latency", after=start)]
     return {
         "start": start, "end": end,
         "heard": rig.obs.text("heard", after=start),
-        "reply": rig.obs.text("reply", after=start),
+        "reply": rig.obs.reply_that_stood(after=start),
         "first_reply_t": min((t for t, _ in rig.obs.of("reply", after=start)), default=None),
         "latency_ms": round((first_audio - end) * 1000) if first_audio else None,
         "internal": latency[0] if latency else None,
@@ -70,30 +77,34 @@ async def test_every_role_answers(rig, directory, report, digit):
 
 
 async def test_long_utterance_is_not_cut_off(rig, directory, report):
-    await rig.connect_to(an_english_role(directory))
+    await rig.connect_to(an_english_role(rig))
     turn = await converse(rig, "long_1", 1.2, "long_2", 1.2, "long_3", timeout=40)
     report.add("long utterance", **{k: turn[k] for k in ("heard", "reply", "latency_ms")})
-    assert turn["first_reply_t"] > turn["end"], "the character replied before the caller finished"
+    # Drafting a reply during a pause is fine if it's withdrawn when the caller carries on;
+    # what the caller must not get is the character talking over them.
+    talked_over = rig.tap.seconds(turn["start"], turn["end"])
+    assert talked_over < 0.5, f"the character talked over the caller for {talked_over:.1f}s"
     heard = turn["heard"].lower()
-    assert "train" in heard and ("hat" in heard or "doing there" in heard), \
-        f"the transcript should span the whole utterance: {heard!r}"
-    assert not rig.obs.of("interrupted", after=turn["start"])
+    assert "station" in heard and "hat" in heard and "doing there" in heard, \
+        f"the transcript should cover the whole utterance: {heard!r}"
+    assert "doing there" in rig.obs.text("heard", after=turn["start"]).lower()
 
 
 async def test_silence_and_noise_are_not_heard_as_speech(rig, directory, report):
-    t0 = await rig.connect_to(an_english_role(directory))
+    await rig.connect_to(an_english_role(rig))
+    t0 = time.monotonic()  # the greeting has finished
     await asyncio.sleep(10)
     await rig.say("cough")
     await asyncio.sleep(20)
     heard = rig.obs.text("heard", after=t0)
     report.add("silence", heard=heard)
     assert not rig.obs.of("reply", after=t0), f"the character replied to silence/noise (heard {heard!r})"
-    assert rig.tap.seconds(t0 + 1) < 0.5, "nothing should play during silence"
+    assert rig.tap.seconds(t0) < 0.5, "nothing should play during silence"
     assert not any(h in heard.lower() for h in HALLUCINATIONS), f"hallucinated speech: {heard!r}"
 
 
 async def test_character_does_not_interrupt_itself(rig, directory):
-    await rig.connect_to(an_english_role(directory))
+    await rig.connect_to(an_english_role(rig))
     start, _ = await rig.say("story_request")
     await rig.wait_playing(after=start, seconds=1)
     done, _ = await rig.obs.wait_for("reply_done", after=start, timeout=60)
@@ -104,7 +115,7 @@ async def test_character_does_not_interrupt_itself(rig, directory):
 
 
 async def test_caller_can_interrupt(rig, directory, report):
-    await rig.connect_to(an_english_role(directory))
+    await rig.connect_to(an_english_role(rig))
     start, _ = await rig.say("story_request")
     await rig.wait_playing(after=start, seconds=2)
     rig.mic.say(load_line("interrupt"), "interrupt")
@@ -126,7 +137,7 @@ async def test_caller_can_interrupt(rig, directory, report):
 
 
 async def test_hanging_up_mid_reply_stops_everything(rig, directory):
-    await rig.connect_to(an_english_role(directory))
+    await rig.connect_to(an_english_role(rig))
     tasks_before = set(asyncio.all_tasks())
     start, _ = await rig.say("story_request")
     await rig.wait_playing(after=start, seconds=1)
@@ -144,7 +155,7 @@ async def test_hanging_up_mid_reply_stops_everything(rig, directory):
 
 async def test_latency(rig, directory, report):
     latencies = []
-    english = [d for d, r in sorted(directory.roles.items()) if r.language == "en"][:2]
+    english = working_english_roles(rig)[:2]
     for digit in english:
         await rig.connect_to(digit)
         for line in ("q1", "q2", "q3", "q4", "q5"):
@@ -165,8 +176,12 @@ async def test_latency(rig, directory, report):
 async def test_api_failure_plays_busy_message(cfg, directory, devices):
     bad = dataclasses.replace(cfg, gemini_api_key="not-a-real-key")
     rig = Rig(bad, directory, devices)
-    t0 = await rig.connect_to(an_english_role(directory))
-    await rig.obs.wait_for("call_failed", after=t0, timeout=15)
+    t0 = time.monotonic()
+    rig.hw.lift()  # (not connect_to: its wait for silence would never end with the busy tone playing)
+    await rig.obs.wait_for("status", after=t0, where=lambda d: d["text"] == "operator")
+    await asyncio.sleep(0.5)
+    await rig.hw.dial(an_english_role(rig))
+    await rig.obs.wait_for("call_failed", after=t0, timeout=30)
     await rig.obs.wait_for("status", after=t0, timeout=30, where=lambda d: d["text"] == "off hook: reorder")
     assert rig.tap.seconds(t0) > 2, "the busy message and reorder tone should play"
     await rig.hang_up()

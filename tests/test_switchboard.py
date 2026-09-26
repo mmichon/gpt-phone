@@ -136,3 +136,16 @@ async def test_call_ending_by_itself_leads_to_reorder_not_idle():
     await dial(b, 1)
     await settle(0.05)
     assert statuses[-1] == "off hook: reorder"
+
+
+async def test_a_paused_role_is_unlisted_and_gets_the_busy_message():
+    import dataclasses
+    b, player, statuses = board()
+    b.directory.roles[7] = dataclasses.replace(b.directory.roles[7], paused=True)
+    assert b.directory.listing() == "For The Elf, dial 1."
+    b.handle(OffHook())
+    await settle()
+    await dial(b, 7)
+    await settle(0.05)
+    assert not FakeCall.instances
+    assert "all circuits busy" in player.texts()

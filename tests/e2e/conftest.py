@@ -50,7 +50,10 @@ async def devices(cfg, directory):
     tts = ElevenLabsTTS(cfg.elevenlabs_api_key, cfg.tts_model, cfg.out_rate, cfg.tts_connect_timeout)
     cache = PromptCache(tts, cfg.cache_dir, cfg.out_rate)
     missing = await cache.warm(directory.prompts())
-    assert missing == 0, "couldn't pre-render prompts; is ElevenLabs reachable and paid?"
+    assert cache.cached(directory.operator.voice_id, directory.operator.tts_model, directory.operator.greeting), \
+        "couldn't render the operator's prompts; is ElevenLabs reachable and paid?"
+    if missing:
+        print(f"\n{missing} prompts couldn't be rendered; roles whose voice fails will fail their test")
     yield mic, player, tap, tts, cache, Sounds(cfg.sounds_dir, cfg.out_rate)
     mic.close()
     player.close()
