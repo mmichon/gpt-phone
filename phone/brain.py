@@ -238,13 +238,13 @@ class GeminiBrain:
                 self._outbox.put_nowait(
                     {"audio": types.Blob(data=data, mime_type=f"audio/pcm;rate={self.cfg.mic_rate}")})
             elif action == vad.END:
-                seconds, peak = self.detector.last_stretch
-                log.info("Speech %.2f s (peak p=%.2f)", seconds, peak)
+                seconds, peak, db = self.detector.last_stretch
+                log.info("Speech %.2f s (peak p=%.2f, loudest %.0f dBFS)", seconds, peak, db)
                 self._outbox.put_nowait({"activity_end": types.ActivityEnd()})
                 self.speech_ended()
             elif action == vad.IGNORED:
-                seconds, peak = self.detector.last_stretch
-                log.info("Possible speech ignored (peak p=%.2f, %d ms)", peak, seconds * 1000)
+                seconds, peak, db = self.detector.last_stretch
+                log.info("Possible speech ignored (peak p=%.2f, %d ms, loudest %.0f dBFS)", peak, seconds * 1000, db)
 
     async def _send_loop(self):
         try:
@@ -376,7 +376,7 @@ class GeminiBrain:
         self._final_due.set()
         if self._caller_talking:
             return  # they carried on; the next transcript will get things moving
-        seconds, _ = self.detector.last_stretch
+        seconds = self.detector.last_stretch[0]
         interim = self._interim
         if interim:
             log.info("No transcript for a %.2f s stretch; using the interim one: %r", seconds, interim)
@@ -392,11 +392,11 @@ class GeminiBrain:
             self._answer_note(UNCLEAR)
 
     def nudge(self):
-        """The caller has gone quiet after a reply: have the character speak up again.
+        """The caller has gone quiet after a reply (or the greeting): have the character speak up again.
         Returns whether it did (not while anything else is going on)."""
-        exchange = self._exchange
+        exchange = self._exchange  # None before the first exchange: the greeting was the last word
         if (self._caller_talking or self._segment_open or self._pending or self._turn_timer
-                or not exchange or not exchange.done):
+                or (exchange and not exchange.done)):
             return False
         log.info("Caller quiet after the reply; nudging them")
         self._answer_note(SILENCE)

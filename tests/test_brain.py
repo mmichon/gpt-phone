@@ -281,7 +281,6 @@ async def test_carrying_on_before_hearing_a_note_reply_drops_the_note():
 
 async def test_a_quiet_caller_is_nudged_only_when_nothing_else_is_going_on():
     brain = ScriptedBrain()
-    assert not brain.nudge(), "nothing said yet"
     brain.say("Hi.")
     await tick()
     assert not brain.nudge(), "still replying"
@@ -291,3 +290,10 @@ async def test_a_quiet_caller_is_nudged_only_when_nothing_else_is_going_on():
     await tick()
     assert brain.asked[-1] == SILENCE
     assert [role for role, _ in brain.texts()] == ["user", "model", "user"]
+
+
+async def test_a_caller_quiet_after_the_greeting_is_nudged():
+    brain = ScriptedBrain()
+    assert brain.nudge()
+    await tick()
+    assert brain.asked == [SILENCE]

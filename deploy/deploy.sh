@@ -47,6 +47,15 @@ if ! cmp -s deploy/60-echo-cancel.conf ~/.config/pipewire/pipewire.conf.d/60-ech
 fi
 pactl set-default-sink phone_aec_sink || true
 pactl set-default-source phone_aec_source || true
+# Mic gain all the way up: the handset's mouthpiece is quiet, and soft words
+# otherwise don't score as speech. Both the adapter's own gain and PipeWire's.
+card=$(awk '/C-Media/ {print $1; exit}' /proc/asound/cards)
+if [[ -n $card ]]; then
+  amixer -q -c "$card" sset Mic capture 100% cap || true
+  sudo alsactl store "$card" 2>/dev/null || true
+fi
+pactl set-source-volume alsa_input.usb-C-Media_Electronics_Inc._USB_Audio_Device-00.mono-fallback 100% || true
+pactl set-source-volume phone_aec_source 100% || true
 systemctl --user daemon-reload
 # Wi-Fi power saving on the Pi causes dropouts and latency spikes. The drop-in
 # covers future connections; iw applies it now without reconnecting.

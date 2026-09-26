@@ -10,6 +10,8 @@ as IGNORED, so missed words show up in the logs.
 
 import collections
 
+import numpy as np
+
 from pysilero_vad import SileroVoiceActivityDetector
 
 START, AUDIO, END, IGNORED = "start", "audio", "end", "ignored"
@@ -32,7 +34,8 @@ class SpeechDetector:
         self.last_probability = 0.0
         self._chunks = 0      # length of the current stretch, or of the current blip
         self._peak = 0.0      # ...and its highest speech probability
-        self.last_stretch = (0.0, 0.0)  # (seconds, peak) of the last stretch or ignored blip
+        self._loudest = 0.0   # ...and its loudest chunk (RMS, 0-1)
+        self.last_stretch = (0.0, 0.0, -99.0)  # (seconds, peak, loudest dBFS) of the last stretch or blip
 
     def reset(self):
         self._vad.reset()
@@ -40,7 +43,17 @@ class SpeechDetector:
         self._leftover = b""
         self.speaking = False
         self._run = 0
-        self._chunks, self._peak = 0, 0.0
+        self._chunks, self._peak, self._loudest = 0, 0.0, 0.0
+
+    def _stats(self, chunks):
+        db = 20 * np.log10(self._loudest) if self._loudest > 0 else -99.0
+        stats = (chunks * self.chunk_ms / 1000, self._peak, db)
+        self._chunks, self._peak, self._loudest = 0, 0.0, 0.0
+        return stats
+
+    def _track(self, chunk, p):
+        rms = np.sqrt(np.mean(np.frombuffer(chunk, dtype=np.int16).astype(np.float32) ** 2)) / 32768
+        self._chunks, self._peak, self._loudest = self._chunks + 1, max(self._peak, p), max(self._loudest, rms)
 
     def feed(self, pcm):
         """Feed mic audio. Returns a list of (START | AUDIO | END, bytes) actions:
@@ -56,25 +69,21 @@ class SpeechDetector:
                 self._preroll.append(chunk)
                 self._run = self._run + 1 if p >= self.threshold else 0
                 if p >= NEAR_MISS:
-                    self._chunks, self._peak = self._chunks + 1, max(self._peak, p)
+                    self._track(chunk, p)
                 elif self._chunks:
-                    self.last_stretch = (self._chunks * self.chunk_ms / 1000, self._peak)
-                    self._chunks, self._peak = 0, 0.0
+                    self.last_stretch = self._stats(self._chunks)
                     actions.append((IGNORED, b""))
                 if self._run >= self.start_chunks:
                     self.speaking, self._run = True, 0
-                    self._chunks, self._peak = len(self._preroll), p
                     actions += [(START, b""), (AUDIO, b"".join(self._preroll))]
                     self._preroll.clear()
             else:
                 actions.append((AUDIO, chunk))
-                self._chunks, self._peak = self._chunks + 1, max(self._peak, p)
+                self._track(chunk, p)
                 # A little hysteresis: only clearly non-speech frames count toward the end.
                 self._run = self._run + 1 if p < self.threshold * 0.7 else 0
                 if self._run >= self.end_chunks:
                     self.speaking, self._run = False, 0
-                    speech = self._chunks - self.end_chunks  # without the trailing silence
-                    self.last_stretch = (speech * self.chunk_ms / 1000, self._peak)
-                    self._chunks, self._peak = 0, 0.0
+                    self.last_stretch = self._stats(self._chunks - self.end_chunks)  # less the silence
                     actions.append((END, b""))
         return actions
