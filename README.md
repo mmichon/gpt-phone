@@ -2,7 +2,7 @@
 
 A Bell 304-series rotary telephone that connects callers to AI characters. Pick up
 the handset and an operator asks you to dial. Dial 0 for the directory, or dial a
-digit and a character answers: an elf, a prospector, the Devil, and so on.
+digit and a character answers: an elf, a prospector, a storytelling sloth, and so on.
 
 It runs on a Raspberry Pi 4 wired to the phone's hook switch and rotary dial, with a
 USB audio adapter driving the handset's earpiece and mouthpiece.
