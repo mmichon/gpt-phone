@@ -248,7 +248,7 @@ def main():
             if not (args.preview or cfg.email_enabled):
                 sys.exit("Set PHONE_EMAIL_TO and PHONE_SMTP_PASSWORD, or pass --preview FILE")
             n = asyncio.run(digest.send_digest(cfg, Journal(cfg.data_dir / "calls"), args.preview))
-            print(f"{n} calls" + (f"; preview in {args.preview}" if args.preview and n else ""))
+            print(f"{n} call{'' if n == 1 else 's'}" + (f"; preview in {args.preview}" if args.preview and n else ""))
         elif args.dial_test:
             asyncio.run(dial_test(cfg, args.record, args.expect))
         else:

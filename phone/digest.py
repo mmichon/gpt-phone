@@ -191,6 +191,9 @@ def build(records, titles=None):
 async def titles(cfg, records):
     """A short headline per call from Gemini, or the caller's first words if that fails."""
     from google import genai
+    from google.genai import types
+    config = types.GenerateContentConfig(
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
     try:
         client = genai.Client(api_key=cfg.gemini_api_key)
     except Exception as e:
@@ -205,7 +208,8 @@ async def titles(cfg, records):
             try:
                 response = await asyncio.wait_for(client.aio.models.generate_content(
                     model=cfg.text_model,
-                    contents=TITLE_PROMPT.format(name=record.role_name, transcript=transcript[:6000])),
+                    contents=TITLE_PROMPT.format(name=record.role_name, transcript=transcript[:6000]),
+                    config=config),
                     TITLE_TIMEOUT_S)
                 title = (response.text or "").strip().strip('"*').splitlines()[0].strip()
                 if title:
