@@ -11,6 +11,7 @@ import time
 
 from . import audio
 from .brain import GeminiBrain, Heard, Interrupted, Reply, ReplyDone, Retracted, SpeechEnded, SpeechStarted
+from .transcripts import CallRecord
 from .tts import PhraseChunker, speakable
 
 log = logging.getLogger(__name__)
@@ -100,6 +101,9 @@ class Call:
         self.player = deps.player
         self.cache = deps.cache
         self.sounds = deps.sounds
+        self.journal = deps.journal
+        self.record = CallRecord.begin(role)
+        self._reply_text = ""
         self.observe = observe or (lambda kind, **data: None)
         self.brain = brain_factory(cfg, role)
         self.speaker = Speaker(deps.tts, deps.player, role.voice_id, role.tts_model, role.language,
@@ -127,6 +131,7 @@ class Call:
             greeting = await self.cache.get(self.role.voice_id, self.role.tts_model,
                                             self.role.greeting, self.role.language)
             self.player.write(greeting)
+            self.record.add("character", self.role.greeting)
             await connect
             self.mic.clear()
             async with asyncio.TaskGroup() as tasks:
@@ -143,6 +148,7 @@ class Call:
             await self.speaker.cancel()
             await self.brain.close()
             self.observe("call_end", role=self.role.digit)
+            self._save_record()
 
     async def _uplink(self):
         muted = audio.silence(self.cfg.mic_rate, self.cfg.mic_block_ms / 1000)
@@ -176,11 +182,13 @@ class Call:
                     self._last_activity = self._heard_at = now
                     self._heard_count += 1
                     log.info("Caller: %s", text.strip())
+                    self.record.add("caller", text)
                     self.observe("heard", text=text)
                 case Reply(text=text, hold_until=hold_until):
                     if not self._replying:
                         self._start_reply(now)
                         self.speaker.hold_until = hold_until
+                    self._reply_text += text
                     self.observe("reply", text=text)
                     for phrase in chunker.feed(text):
                         await self.speaker.say(phrase)
@@ -189,14 +197,17 @@ class Call:
                         await self.speaker.say(phrase)
                     await self.speaker.end_reply()
                     self._replying = False
+                    self._end_reply_record()
                     self.observe("reply_done")
                 case Interrupted():
                     self._replying = False
+                    self._end_reply_record(cut_short=True)
                     self.observe("interrupted")
                     await self._interrupt(chunker)
                 case Retracted():
                     # The caller carried on before hearing it; the brain will answer it all together.
                     self._replying = False
+                    self._reply_text = ""  # never heard, so never said
                     self.observe("retracted")
                     await self._interrupt(chunker)
 
@@ -207,6 +218,22 @@ class Call:
             self._heard_timer = None
         await self.speaker.cancel()
         self.observe("output_stopped")
+
+    def _end_reply_record(self, cut_short=False):
+        text, self._reply_text = self._reply_text.strip(), ""
+        if text:
+            self.record.add("character", text + " —" if cut_short else text)
+
+    def _save_record(self):
+        """Keep the transcript for the daily email. Never lets a failure reach the call."""
+        if not self.journal or not self.record.caller_spoke:
+            return
+        try:
+            self._end_reply_record(cut_short=True)  # hung up mid-reply
+            self.record.finish()
+            self.journal.save(self.record)
+        except Exception as e:
+            log.warning("Couldn't save the call transcript: %s", e)
 
     def _start_reply(self, now):
         # Latency is measured from when the caller stopped talking: the server's
@@ -257,6 +284,7 @@ class Call:
                 pcm = await self.cache.get(self.role.voice_id, self.role.tts_model,
                                            self.role.still_there, self.role.language)
                 self.player.write(pcm)
+                self.record.add("character", self.role.still_there)
             elif quiet < self.cfg.still_there_s:
                 prompted = False
 

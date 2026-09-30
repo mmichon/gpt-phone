@@ -34,6 +34,7 @@ class Config:
     roles_file: Path = REPO_DIR / "roles.yaml"
     sounds_dir: Path = REPO_DIR / "sounds"
     cache_dir: Path = Path.home() / ".cache" / "gpt-phone"
+    data_dir: Path = Path.home() / ".local" / "share" / "gpt-phone"  # call transcripts
 
     # Hardware (BCM pin numbers)
     hook_gpio: int = 14
@@ -61,10 +62,21 @@ class Config:
     still_there_s: float = 12.0  # caller silence before "are you still there?"
     give_up_s: float = 120.0     # caller silence before the call is dropped
 
+    # Daily email of call transcripts (off unless email_to and smtp_password are set)
+    email_to: str | None = None
+    smtp_user: str | None = None     # the Gmail account that sends it; defaults to email_to
+    smtp_password: str | None = None  # a Gmail app password
+    smtp_host: str = "smtp.gmail.com"
+    digest_hour: int = 9             # local time; covers every call since the last digest
+
     # Timeouts (seconds)
     connect_timeout: float = 5.0
     first_token_timeout: float = 10.0
     tts_connect_timeout: float = 5.0
+
+    @property
+    def email_enabled(self):
+        return bool(self.email_to and self.smtp_password)
 
     @classmethod
     def from_env(cls):
@@ -78,6 +90,12 @@ class Config:
             tts_model=_env("PHONE_TTS_MODEL", defaults.tts_model),
             roles_file=Path(_env("PHONE_ROLES_FILE", defaults.roles_file)).expanduser(),
             cache_dir=Path(_env("PHONE_CACHE_DIR", defaults.cache_dir)).expanduser(),
+            data_dir=Path(_env("PHONE_DATA_DIR", defaults.data_dir)).expanduser(),
+            email_to=_env("PHONE_EMAIL_TO"),
+            smtp_user=_env("PHONE_SMTP_USER") or _env("PHONE_EMAIL_TO"),
+            smtp_password=_env("PHONE_SMTP_PASSWORD"),
+            smtp_host=_env("PHONE_SMTP_HOST", defaults.smtp_host),
+            digest_hour=int(_env("PHONE_DIGEST_HOUR", defaults.digest_hour)),
             volume=float(_env("PHONE_VOLUME", defaults.volume)),
             barge_in=_env_bool("PHONE_BARGE_IN", defaults.barge_in),
             vad_threshold=float(_env("PHONE_VAD_THRESHOLD", defaults.vad_threshold)),

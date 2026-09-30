@@ -1,7 +1,9 @@
-"""Entry point: python -m phone [--no-gpio] [--role N] [--dial-test [--record FILE --expect DIGITS]]"""
+"""Entry point: python -m phone [--no-gpio] [--role N] [--dial-test [--record FILE --expect DIGITS]]
+                              [--send-digest [--preview FILE]]"""
 
 import argparse
 import asyncio
+import datetime
 import json
 import logging
 import os
@@ -9,10 +11,12 @@ import socket
 import sys
 import urllib.request
 
+from . import digest
 from .audio import Mic, Player
 from .config import REPO_DIR, Config
 from .roles import load_directory
 from .switchboard import Deps, Sounds, Switchboard
+from .transcripts import Journal
 from .tts import ElevenLabsTTS, PromptCache
 
 log = logging.getLogger("phone")
@@ -119,6 +123,23 @@ async def announce_ready(cfg, cache, directory, status, board, player, sounds):
         await player.play(sounds.ready)
 
 
+async def digest_loop(cfg, journal, status):
+    """Each morning, email the transcripts of every call since the last email (if there were any)."""
+    while True:
+        at = digest.next_run(datetime.datetime.now(), cfg.digest_hour)
+        log.info("Next call-transcript email check at %s", at.strftime("%a %H:%M"))
+        await asyncio.sleep((at - datetime.datetime.now()).total_seconds())
+        while True:
+            try:
+                await digest.send_digest(cfg, journal)
+                status.problem("email")
+                break
+            except Exception as e:
+                log.error("Emailing call transcripts failed (retrying in an hour): %s", e)
+                status.problem("email", f"email: {e}")
+                await asyncio.sleep(3600)
+
+
 async def heartbeat(mic, player, hardware):
     while True:
         if not (mic.healthy and player.healthy):
@@ -151,7 +172,9 @@ async def serve(cfg, args):
     for role in directory.roles.values():
         sounds.get(role.ringback)
 
-    board = Switchboard(cfg, directory, hardware, Deps(mic, player, tts, cache, sounds), status=status.set)
+    journal = Journal(cfg.data_dir / "calls")
+    board = Switchboard(cfg, directory, hardware, Deps(mic, player, tts, cache, sounds, journal),
+                        status=status.set)
     board.start()
     sd_notify("READY=1")
     log.info("Ready")
@@ -159,6 +182,8 @@ async def serve(cfg, args):
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(heartbeat(mic, player, hardware))
             tasks.create_task(announce_ready(cfg, cache, directory, status, board, player, sounds))
+            if cfg.email_enabled:
+                tasks.create_task(digest_loop(cfg, journal, status))
     finally:
         sd_notify("STOPPING=1")
         hardware.close()
@@ -198,6 +223,9 @@ def main():
     parser.add_argument("--dial-test", action="store_true", help="print decoded digits from the rotary dial")
     parser.add_argument("--record", help="with --dial-test: save raw dial edges to this JSON file")
     parser.add_argument("--expect", help="with --dial-test: the digits you're going to dial")
+    parser.add_argument("--send-digest", action="store_true",
+                        help="email the transcripts of calls not yet emailed, now")
+    parser.add_argument("--preview", help="with --send-digest: write the email's HTML here instead of sending it")
     parser.add_argument("--log-level", default=os.environ.get("PHONE_LOG_LEVEL", "INFO"))
     args = parser.parse_args()
 
@@ -216,7 +244,12 @@ def main():
 
     cfg = Config.from_env()
     try:
-        if args.dial_test:
+        if args.send_digest:
+            if not (args.preview or cfg.email_enabled):
+                sys.exit("Set PHONE_EMAIL_TO and PHONE_SMTP_PASSWORD, or pass --preview FILE")
+            n = asyncio.run(digest.send_digest(cfg, Journal(cfg.data_dir / "calls"), args.preview))
+            print(f"{n} calls" + (f"; preview in {args.preview}" if args.preview and n else ""))
+        elif args.dial_test:
             asyncio.run(dial_test(cfg, args.record, args.expect))
         else:
             asyncio.run(serve(cfg, args))

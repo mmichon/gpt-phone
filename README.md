@@ -78,6 +78,20 @@ account (the free tier refuses Voice Library voices over the API).
    The Pi needs `sudo apt install ffmpeg libportaudio2 python3-gpiozero python3-lgpio`
    and `loginctl enable-linger pi`, so the user session (and PipeWire) starts at boot.
 
+### Call transcripts by email
+
+Every call where the caller says something is saved on the Pi, in
+`~/.local/share/gpt-phone/calls/calls.jsonl`. Each morning at 9 the phone emails you
+a digest of every call since the last one. It skips the email if nobody called. The
+digest shows each call as a chat, with a short title written by Gemini. To turn it
+on, add these to `~/.config/gpt-phone/env`. The password is a
+[Gmail app password](https://myaccount.google.com/apppasswords).
+```sh
+PHONE_EMAIL_TO=you@gmail.com
+PHONE_SMTP_PASSWORD=abcd efgh ijkl mnop
+```
+`python -m phone --send-digest` sends one now, and adding `--preview out.html` writes it to a file instead.
+
 `deploy/rollback-legacy.sh` restores the pre-2.0 version (tagged `legacy-v1`).
 
 ## Development

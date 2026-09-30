@@ -273,3 +273,49 @@ async def test_speech_without_words_does_not_reset_the_silence(setup):
     await asyncio.sleep(2.1)
     assert brain.nudges == 2
     task.cancel()
+
+
+class ListJournal:
+    def __init__(self):
+        self.saved = []
+
+    def save(self, record):
+        self.saved.append(record)
+
+
+async def test_the_transcript_is_kept(setup):
+    from phone.brain import Retracted
+    make, brains, tts, player, _ = setup
+    call = make()
+    call.journal = journal = ListJournal()
+    task = await start(call)
+    brain = brains[0]
+    for event in [Heard("Tell me a story."), Reply("Once upon "), Reply("a time. "), ReplyDone(),
+                  Heard("About a"), Reply("A dragon? "), Retracted(),
+                  Heard("About a dragon."), Reply("There once was a dragon "), Interrupted(),
+                  Heard("Bye!"), Reply("Goodbye, dear")]:
+        brain.script.put_nowait(event)
+    await asyncio.sleep(0.05)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    [record] = journal.saved
+    assert [(s, t) for _, s, t in record.lines] == [
+        ("character", call.role.greeting),
+        ("caller", "Tell me a story."), ("character", "Once upon a time."),
+        ("caller", "About a"),                      # the retracted reply was never heard
+        ("caller", "About a dragon."), ("character", "There once was a dragon —"),
+        ("caller", "Bye!"), ("character", "Goodbye, dear —"),  # hung up mid-reply
+    ]
+    assert record.role_digit == 7 and record.ended
+
+
+async def test_a_call_where_nobody_spoke_is_not_kept(setup):
+    make, brains, *_ = setup
+    call = make()
+    call.journal = journal = ListJournal()
+    task = await start(call)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert journal.saved == []

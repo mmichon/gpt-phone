@@ -27,6 +27,7 @@ class Deps:
     tts: object
     cache: object
     sounds: object
+    journal: object = None  # transcripts.Journal: keeps what was said, for the daily email
 
 
 class Sounds:
