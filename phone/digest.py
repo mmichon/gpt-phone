@@ -32,7 +32,6 @@ MUTED = "#8a7b6c"
 RULE = "#e6dac7"
 RED = "#9c2b23"
 CALLER_BUBBLE = "#e8dcc5"
-SERIF = "Georgia, 'Times New Roman', serif"
 SANS = "-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
 DIGIT_COLORS = ["#6b4f3a", "#2f6f5e", "#9c2b23", "#3d5a8a", "#b0762a",
                 "#7a4a86", "#4f7a2f", "#a8456d", "#2f6f86", "#8a5a2f"]
@@ -116,9 +115,9 @@ def build(records, titles=None):
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{PAGE};">
 <tr><td align="center" style="padding:24px 12px;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
-<tr><td style="padding:8px 4px 20px;text-align:center;font-family:{SERIF};color:{INK};">
+<tr><td style="padding:8px 4px 20px;text-align:center;font-family:{SANS};color:{INK};">
   <div style="font-size:13px;letter-spacing:3px;text-transform:uppercase;color:{RED};">The Rotary Phone</div>
-  <div style="font-size:30px;line-height:1.2;margin-top:6px;">Who called, and what they said</div>
+  <div style="font-size:28px;font-weight:700;line-height:1.2;margin-top:6px;">Who called, and what they said</div>
   <div style="font-family:{SANS};font-size:14px;color:{MUTED};margin-top:8px;">{e(span)}</div>
 </td></tr>
 <tr><td style="background:{CARD};border-radius:14px;border:1px solid {RULE};padding:18px 8px;">
@@ -126,7 +125,7 @@ def build(records, titles=None):
     for value, label in stats:
         out.append(f"""\
     <td width="33%" align="center" valign="top" style="padding:0 6px;">
-      <div style="font-family:{SERIF};font-size:22px;color:{INK};">{e(value)}</div>
+      <div style="font-family:{SANS};font-size:22px;font-weight:600;color:{INK};">{e(value)}</div>
       <div style="font-family:{SANS};font-size:12px;color:{MUTED};text-transform:uppercase;letter-spacing:1px;margin-top:4px;">{e(label)}</div>
     </td>""")
     out.append("  </tr></table>")
@@ -157,7 +156,7 @@ def build(records, titles=None):
     <span style="display:inline-block;background:{color};color:#fff;border-radius:10px;padding:2px 9px;font-weight:600;">{e(record.role_name)}</span>
     &nbsp;{e(_clock(record.start_time))} · {e(_duration(record.seconds))}{longest_note}
   </div>
-  <div style="font-family:{SERIF};font-style:italic;font-size:20px;line-height:1.3;color:{INK};margin:10px 0 12px;">{e(title)}</div>""")
+  <div style="font-family:{SANS};font-weight:600;font-size:19px;line-height:1.3;color:{INK};margin:10px 0 12px;">{e(title)}</div>""")
         for speaker, text in _merged(record.lines):
             if speaker == "caller":
                 out.append(f"""\
