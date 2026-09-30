@@ -46,7 +46,7 @@ class Config:
     volume: float = 0.8          # software gain on everything played
 
     # Conversation behavior
-    pickup_delay_s: float = 1.0  # silence after the handset lifts, before the operator speaks
+    pickup_delay_s: float = 0.5  # silence after the handset lifts, before the operator speaks
     barge_in: bool = True        # let callers interrupt the character (needs echo cancellation)
     vad_threshold: float = 0.5   # Silero speech probability that counts as speech
     vad_start_ms: int = 64       # this much speech starts a turn (so clicks don't)
