@@ -38,6 +38,7 @@ class Sounds:
         self._decoded = {}
         self.reorder = audio.reorder_tone(rate)
         self.dial_tone = audio.tone(rate, (350, 440), DIAL_WAIT_S)
+        self.ready = audio.ready_ring(rate)
 
     def get(self, name):
         if name not in self._decoded:
@@ -86,6 +87,10 @@ class Switchboard:
                 self._set_status("idle")
             case DialStart() | Digit():
                 self._dial.put_nowait(event)
+
+    @property
+    def idle(self):
+        return self._session is None or self._session.done()
 
     async def wait_idle(self):
         if self._session:

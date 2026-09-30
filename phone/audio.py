@@ -177,6 +177,11 @@ def reorder_tone(rate, seconds=10.0):
     return tone(rate, (480, 620), seconds, on=0.25, off=0.25)
 
 
+def ready_ring(rate):
+    """A short, loud telephone ring: the phone is up and ready for calls."""
+    return tone(rate, (440, 480), 1.2, on=0.4, off=0.2, volume=0.9)
+
+
 def scale(pcm, volume):
     """Scale 16-bit PCM by a gain factor."""
     if volume == 1.0:

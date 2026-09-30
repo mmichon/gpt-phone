@@ -77,6 +77,17 @@ async def test_unknown_number_plays_wrong_number_then_reorder():
     assert not FakeCall.instances
 
 
+async def test_idle_is_false_during_a_session():
+    b, _, _ = board()
+    assert b.idle
+    b.handle(OffHook())
+    await settle()
+    assert not b.idle
+    b.handle(OnHook())
+    await b.wait_idle()
+    assert b.idle
+
+
 async def test_hanging_up_cancels_the_call_and_silences_audio():
     b, player, statuses = board()
     b.handle(OffHook())

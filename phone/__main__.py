@@ -111,6 +111,14 @@ async def warm_cache(cache, directory, status):
     log.info("All fixed prompts are cached")
 
 
+async def announce_ready(cfg, cache, directory, status, board, player, sounds):
+    """Ring loudly once services check out and prompts are cached, so you can hear it's ready."""
+    await asyncio.gather(check_services(cfg, status), warm_cache(cache, directory, status))
+    log.info("Fully up")
+    if board.idle:
+        await player.play(sounds.ready)
+
+
 async def heartbeat(mic, player, hardware):
     while True:
         if not (mic.healthy and player.healthy):
@@ -150,8 +158,7 @@ async def serve(cfg, args):
     try:
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(heartbeat(mic, player, hardware))
-            tasks.create_task(check_services(cfg, status))
-            tasks.create_task(warm_cache(cache, directory, status))
+            tasks.create_task(announce_ready(cfg, cache, directory, status, board, player, sounds))
     finally:
         sd_notify("STOPPING=1")
         hardware.close()
